@@ -10,7 +10,7 @@ import {
 	type IDataObject,
 	type JsonObject,
 } from 'n8n-workflow';
-import { rendobarApiRequest } from './shared/transport';
+import { rendobarApiRequest, rendobarUpload } from './shared/transport';
 import { getJobTypes } from './listSearch/getJobTypes';
 import { getJobFields } from './methods/getJobFields';
 
@@ -96,6 +96,13 @@ export class Rendobar implements INodeType {
 						value: 'get',
 						action: 'Get a job',
 						description: 'Fetch a job by ID, including its status and output',
+					},
+					{
+						name: 'Upload File',
+						value: 'upload',
+						action: 'Upload a file',
+						description:
+							'Upload a binary file from a previous node and get a URL to use as a job input',
 					},
 				],
 				default: 'create',
@@ -186,6 +193,28 @@ export class Rendobar implements INodeType {
 				placeholder: 'e.g. job_abc123',
 				description: 'The ID of the job',
 			},
+			{
+				displayName: 'Input Binary Field',
+				name: 'binaryProperty',
+				type: 'string',
+				default: 'data',
+				required: true,
+				displayOptions: { show: { operation: ['upload'] } },
+				placeholder: 'data',
+				hint: 'The name of the input field holding the binary file to upload',
+				description:
+					'Name of the binary property from a previous node that contains the file to upload',
+			},
+			{
+				displayName: 'Filename',
+				name: 'uploadFilename',
+				type: 'string',
+				default: '',
+				displayOptions: { show: { operation: ['upload'] } },
+				placeholder: 'e.g. clip.mp4',
+				description:
+					"Override the filename sent to Rendobar. Defaults to the binary data's own file name.",
+			},
 		],
 	};
 
@@ -231,6 +260,17 @@ export class Rendobar implements INodeType {
 							responseData = await waitForJob.call(this, jobId, pollMs, maxWaitMs, i);
 						}
 					}
+				} else if (operation === 'upload') {
+					const binaryProperty = this.getNodeParameter('binaryProperty', i) as string;
+					const binary = this.helpers.assertBinaryData(i, binaryProperty);
+					const buffer = await this.helpers.getBinaryDataBuffer(i, binaryProperty);
+					const filename =
+						(this.getNodeParameter('uploadFilename', i, '') as string) ||
+						binary.fileName ||
+						'upload';
+					const contentType = binary.mimeType || 'application/octet-stream';
+
+					responseData = await rendobarUpload.call(this, buffer, filename, contentType);
 				} else {
 					const jobId = this.getNodeParameter('jobId', i) as string;
 					const path = `/jobs/${encodeURIComponent(jobId)}`;

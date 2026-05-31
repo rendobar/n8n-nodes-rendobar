@@ -25,6 +25,7 @@ You need a Rendobar API key (starts with `rb_`). Create one in the [dashboard](h
   - Optional **Wait for Completion**: poll until the job is done and return its result. It blocks the workflow, so it's best for short jobs — for long jobs use the trigger below. Configure the poll interval and a max-wait timeout.
 - **Get Job** — fetch a job by ID, including its status and output URL.
 - **Cancel Job** — cancel a job that is still running.
+- **Upload File** — stream a binary file from a previous node to Rendobar and get back a URL to use as a job input. Files are ephemeral and auto-delete after 24 hours. Pair it with Create Job: upload, then reference the returned `downloadUrl` in the next node's inputs.
 
 ### Rendobar Trigger
 
