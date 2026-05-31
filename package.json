@@ -37,7 +37,8 @@
 			"dist/credentials/RendobarApi.credentials.js"
 		],
 		"nodes": [
-			"dist/nodes/Rendobar/Rendobar.node.js"
+			"dist/nodes/Rendobar/Rendobar.node.js",
+			"dist/nodes/RendobarTrigger/RendobarTrigger.node.js"
 		]
 	},
 	"devDependencies": {
