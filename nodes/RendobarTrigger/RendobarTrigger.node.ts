@@ -49,8 +49,6 @@ export class RendobarTrigger implements INodeType {
 				options: [
 					{ name: 'Balance Depleted', value: 'balance.depleted' },
 					{ name: 'Balance Low', value: 'balance.low' },
-					{ name: 'Batch Completed', value: 'batch.completed' },
-					{ name: 'Batch Failed', value: 'batch.failed' },
 					{ name: 'Job Cancelled', value: 'job.cancelled' },
 					{ name: 'Job Completed', value: 'job.completed' },
 					{ name: 'Job Created', value: 'job.created' },
