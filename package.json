@@ -1,0 +1,53 @@
+{
+	"name": "n8n-nodes-rendobar",
+	"version": "0.1.0",
+	"description": "Rendobar media processing for n8n: submit, track, and cancel video jobs, and trigger on completion.",
+	"license": "MIT",
+	"homepage": "https://rendobar.com",
+	"keywords": [
+		"n8n-community-node-package",
+		"rendobar",
+		"video",
+		"ffmpeg",
+		"media"
+	],
+	"author": {
+		"name": "Rendobar"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/rendobar/n8n-nodes-rendobar.git"
+	},
+	"scripts": {
+		"build": "n8n-node build",
+		"build:watch": "tsc --watch",
+		"dev": "n8n-node dev",
+		"lint": "n8n-node lint",
+		"lint:fix": "n8n-node lint --fix",
+		"release": "n8n-node release",
+		"prepublishOnly": "n8n-node prerelease"
+	},
+	"files": [
+		"dist"
+	],
+	"n8n": {
+		"n8nNodesApiVersion": 1,
+		"strict": true,
+		"credentials": [
+			"dist/credentials/RendobarApi.credentials.js"
+		],
+		"nodes": [
+			"dist/nodes/Rendobar/Rendobar.node.js"
+		]
+	},
+	"devDependencies": {
+		"@n8n/node-cli": "*",
+		"eslint": "9.29.0",
+		"prettier": "3.8.3",
+		"release-it": "20.0.1",
+		"typescript": "5.9.3"
+	},
+	"peerDependencies": {
+		"n8n-workflow": "*"
+	}
+}
