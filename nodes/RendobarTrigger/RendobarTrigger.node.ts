@@ -16,6 +16,7 @@ import { rendobarApiRequest } from '../Rendobar/shared/transport';
 //
 // Note: Rendobar must be able to reach the webhook URL. That works on a hosted
 // or tunnelled n8n; a plain localhost n8n isn't reachable from the API.
+// eslint-disable-next-line @n8n/community-nodes/node-usable-as-tool -- trigger nodes can't be agent tools; the type only allows `true`, so omit it
 export class RendobarTrigger implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Rendobar Trigger',
@@ -26,7 +27,6 @@ export class RendobarTrigger implements INodeType {
 		subtitle: '={{$parameter["events"].join(", ")}}',
 		description: 'Starts the workflow when a Rendobar event fires',
 		defaults: { name: 'Rendobar Trigger' },
-		usableAsTool: false,
 		inputs: [],
 		outputs: [NodeConnectionTypes.Main],
 		credentials: [{ name: 'rendobarApi', required: true }],
