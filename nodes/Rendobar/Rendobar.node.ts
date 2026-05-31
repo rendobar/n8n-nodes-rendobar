@@ -240,16 +240,20 @@ export class Rendobar implements INodeType {
 							: ((await rendobarApiRequest.call(this, 'GET', path)) as IDataObject);
 				}
 
-				const data = (responseData?.data as IDataObject) ?? responseData;
+				const data = (responseData.data as IDataObject) ?? responseData;
 				returnData.push({ json: data, pairedItem: { item: i } });
 			} catch (error) {
 				if (this.continueOnFail()) {
 					returnData.push({
-						json: { error: (error as Error).message },
+						json: { error: error instanceof Error ? error.message : String(error) },
 						pairedItem: { item: i },
 					});
 					continue;
 				}
+				// waitForJob already throws well-formed n8n errors; re-wrapping them
+				// would double-wrap and turn a wait timeout into an API error.
+				// eslint-disable-next-line @n8n/community-nodes/require-node-api-error -- error is already a NodeApiError/NodeOperationError here
+				if (error instanceof NodeApiError || error instanceof NodeOperationError) throw error;
 				throw new NodeApiError(this.getNode(), error as JsonObject, { itemIndex: i });
 			}
 		}
