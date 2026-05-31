@@ -1,0 +1,17 @@
+{
+	"name": "n8n-nodes-rendobar",
+	"image": "mcr.microsoft.com/devcontainers/typescript-node:22",
+	"postCreateCommand": "npm install",
+	"forwardPorts": [5678],
+	"portsAttributes": {
+		"5678": {
+			"label": "n8n",
+			"onAutoForward": "openBrowser"
+		}
+	},
+	"customizations": {
+		"vscode": {
+			"extensions": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
+		}
+	}
+}
