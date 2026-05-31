@@ -1,6 +1,8 @@
 import {
 	NodeConnectionTypes,
 	NodeApiError,
+	NodeOperationError,
+	sleep,
 	type IExecuteFunctions,
 	type INodeExecutionData,
 	type INodeType,
@@ -11,6 +13,50 @@ import {
 import { rendobarApiRequest } from './shared/transport';
 import { getJobTypes } from './listSearch/getJobTypes';
 import { getJobFields } from './methods/getJobFields';
+
+const TERMINAL_STATUSES = new Set(['complete', 'failed', 'cancelled']);
+
+// Poll GET /jobs/:id until the job reaches a terminal state or maxWait elapses.
+// Rendobar has no server-side wait endpoint and CF Workers can't hold a long
+// connection, so this polls client-side. It blocks the workflow, so it's meant
+// for short jobs; long jobs should use the Rendobar Trigger node instead.
+async function waitForJob(
+	this: IExecuteFunctions,
+	jobId: string,
+	pollMs: number,
+	maxWaitMs: number,
+	itemIndex: number,
+): Promise<IDataObject> {
+	const deadline = Date.now() + maxWaitMs;
+	for (;;) {
+		const response = (await rendobarApiRequest.call(
+			this,
+			'GET',
+			`/jobs/${encodeURIComponent(jobId)}`,
+		)) as IDataObject;
+		const job = (response.data as IDataObject) ?? response;
+
+		if (TERMINAL_STATUSES.has(job.status as string)) {
+			if (job.status === 'failed') {
+				throw new NodeApiError(this.getNode(), job as JsonObject, {
+					itemIndex,
+					message: `Job ${jobId} failed`,
+				});
+			}
+			return response;
+		}
+
+		if (Date.now() >= deadline) {
+			throw new NodeOperationError(
+				this.getNode(),
+				`Job ${jobId} did not finish within ${Math.round(maxWaitMs / 1000)}s. It is still running — fetch it later with Get Job, or use the Rendobar Trigger node.`,
+				{ itemIndex },
+			);
+		}
+
+		await sleep(pollMs);
+	}
+}
 
 export class Rendobar implements INodeType {
 	description: INodeTypeDescription = {
@@ -104,6 +150,33 @@ export class Rendobar implements INodeType {
 				},
 			},
 			{
+				displayName: 'Wait for Completion',
+				name: 'waitForCompletion',
+				type: 'boolean',
+				default: false,
+				displayOptions: { show: { operation: ['create'] } },
+				description:
+					'Whether to wait until the job finishes and return its result. Good for short jobs. For long jobs prefer the Rendobar Trigger node, which is event-driven and does not block the workflow.',
+			},
+			{
+				displayName: 'Poll Interval (Seconds)',
+				name: 'pollInterval',
+				type: 'number',
+				default: 5,
+				typeOptions: { minValue: 2 },
+				displayOptions: { show: { operation: ['create'], waitForCompletion: [true] } },
+				description: 'How often to check the job status while waiting',
+			},
+			{
+				displayName: 'Max Wait (Seconds)',
+				name: 'maxWait',
+				type: 'number',
+				default: 300,
+				typeOptions: { minValue: 5 },
+				displayOptions: { show: { operation: ['create'], waitForCompletion: [true] } },
+				description: 'Stop waiting and raise an error after this many seconds',
+			},
+			{
 				displayName: 'Job ID',
 				name: 'jobId',
 				type: 'string',
@@ -148,6 +221,16 @@ export class Rendobar implements INodeType {
 						// reuses the same job instead of charging twice.
 						idempotencyKey: `n8n:${executionId}:${i}`,
 					})) as IDataObject;
+
+					if (this.getNodeParameter('waitForCompletion', i, false) as boolean) {
+						const created = (responseData.data as IDataObject) ?? responseData;
+						const jobId = created.id as string;
+						if (!TERMINAL_STATUSES.has(created.status as string)) {
+							const pollMs = (this.getNodeParameter('pollInterval', i, 5) as number) * 1000;
+							const maxWaitMs = (this.getNodeParameter('maxWait', i, 300) as number) * 1000;
+							responseData = await waitForJob.call(this, jobId, pollMs, maxWaitMs, i);
+						}
+					}
 				} else {
 					const jobId = this.getNodeParameter('jobId', i) as string;
 					const path = `/jobs/${encodeURIComponent(jobId)}`;

@@ -16,7 +16,7 @@ You need a Rendobar API key (starts with `rb_`). Create one in the [dashboard](h
 
 **Rendobar** node:
 
-- **Create Job** — submit a job. Pick the job type from a dropdown that is loaded live from your account, then fill in the parameters. The parameter fields are discovered from the API, so new job types appear without updating this node. Each submission sends an idempotency key derived from the n8n execution, so a retried step never creates a duplicate job.
+- **Create Job** — submit a job. Pick the job type from a dropdown that is loaded live from your account, then fill in the parameters. The parameter fields are discovered from the API, so new job types appear without updating this node. Each submission sends an idempotency key derived from the n8n execution, so a retried step never creates a duplicate job. Turn on **Wait for Completion** to poll until the job finishes and return its result (best for short jobs; for long jobs use the Trigger).
 - **Get Job** — fetch a job by ID, including its status and output URL.
 - **Cancel Job** — cancel a job that is still running.
 
