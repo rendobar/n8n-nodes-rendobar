@@ -1,5 +1,5 @@
 {
-	"node": "n8n-nodes-rendobar.rendobar",
+	"node": "@rendobar/n8n-nodes-rendobar.rendobar",
 	"nodeVersion": "1.0",
 	"codexVersion": "1.0",
 	"categories": ["Marketing", "Development", "Utility"],

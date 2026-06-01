@@ -1,5 +1,5 @@
 {
-	"name": "n8n-nodes-rendobar",
+	"name": "@rendobar/n8n-nodes-rendobar",
 	"version": "0.1.0",
 	"description": "Rendobar media processing for n8n: submit, track, and cancel video jobs, and trigger on completion.",
 	"license": "MIT",

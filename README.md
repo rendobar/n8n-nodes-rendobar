@@ -1,4 +1,4 @@
-# n8n-nodes-rendobar
+# @rendobar/n8n-nodes-rendobar
 
 n8n community node for [Rendobar](https://rendobar.com), a media processing API. Submit, track, and cancel video jobs from your workflows, and start workflows when jobs finish.
 
@@ -6,7 +6,7 @@ n8n community node for [Rendobar](https://rendobar.com), a media processing API.
 
 ## Installation
 
-In n8n, go to **Settings > Community Nodes** and install `n8n-nodes-rendobar`. See the n8n [community nodes docs](https://docs.n8n.io/integrations/community-nodes/installation/) for details.
+In n8n, go to **Settings > Community Nodes** and install `@rendobar/n8n-nodes-rendobar`. See the n8n [community nodes docs](https://docs.n8n.io/integrations/community-nodes/installation/) for details.
 
 ## Credentials
 
