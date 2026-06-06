@@ -351,6 +351,9 @@ export class Rendobar implements INodeType {
 							i,
 							'data',
 						) as string;
+						// `encoding: 'arraybuffer'` makes httpRequest resolve to an
+						// ArrayBuffer, but its return type is the union for all encodings,
+						// so narrow it here before wrapping in a Buffer.
 						const fileBuffer = (await this.helpers.httpRequest({
 							method: 'GET',
 							url: file.url,
