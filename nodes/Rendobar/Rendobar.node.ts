@@ -16,6 +16,40 @@ import { getJobFields } from './methods/getJobFields';
 
 const TERMINAL_STATUSES = new Set(['complete', 'failed', 'cancelled']);
 
+// A produced file in the unified job output. `url` is a ready-to-fetch,
+// time-limited URL; `type` is an open enum (video|image|audio|captions|
+// playlist|data|other) derived from the extension — tolerate unknown values.
+interface OutputFile {
+	url: string;
+	path: string;
+	type: string;
+	size: number;
+	meta?: IDataObject;
+}
+
+// Every Rendobar job, for every job type, returns ONE output shape when it
+// completes:
+//   data      — job-type-specific computed result (probe/detections/transcript),
+//               or null for file-only jobs.
+//   file      — the headline result: a single output file OR a stream manifest
+//               (.m3u8/.mpd). Always one of `files`. Null for data-only jobs/sets.
+//   files     — every produced file, the complete list. [] for data-only jobs.
+//   expiresAt — Unix ms when the file URLs expire, or null when there are none.
+// We keep the full job under `json` and also lift these four fields to the top
+// of the item so downstream nodes get clean, predictable fields without having
+// to dig into `output` (and without narrowing on a per-job-type shape).
+function buildJobItem(job: IDataObject, itemIndex: number): INodeExecutionData {
+	const json: IDataObject = { ...job };
+	const output = job.output as IDataObject | undefined;
+	if (output) {
+		json.data = output.data ?? null;
+		json.file = (output.file as IDataObject | null) ?? null;
+		json.files = (output.files as IDataObject[]) ?? [];
+		json.expiresAt = output.expiresAt ?? null;
+	}
+	return { json, pairedItem: { item: itemIndex } };
+}
+
 // Poll GET /jobs/:id until the job reaches a terminal state or maxWait elapses.
 // Rendobar has no server-side wait endpoint and CF Workers can't hold a long
 // connection, so this polls client-side. It blocks the workflow, so it's meant
@@ -194,6 +228,24 @@ export class Rendobar implements INodeType {
 				description: 'The ID of the job',
 			},
 			{
+				displayName: 'Download Output File',
+				name: 'downloadOutput',
+				type: 'boolean',
+				default: false,
+				displayOptions: { show: { operation: ['get'] } },
+				description:
+					"Whether to download the headline output file (the result's file URL) into a binary property so the next node can use it directly. Only applies to completed jobs that produced a file.",
+			},
+			{
+				displayName: 'Output Binary Field',
+				name: 'outputBinaryProperty',
+				type: 'string',
+				default: 'data',
+				displayOptions: { show: { operation: ['get'], downloadOutput: [true] } },
+				placeholder: 'data',
+				description: 'Name of the binary property to store the downloaded output file under',
+			},
+			{
 				displayName: 'Input Binary Field',
 				name: 'binaryProperty',
 				type: 'string',
@@ -280,8 +332,41 @@ export class Rendobar implements INodeType {
 							: ((await rendobarApiRequest.call(this, 'GET', path)) as IDataObject);
 				}
 
-				const data = (responseData.data as IDataObject) ?? responseData;
-				returnData.push({ json: data, pairedItem: { item: i } });
+				const job = (responseData.data as IDataObject) ?? responseData;
+				const item = buildJobItem(job, i);
+
+				// Optional: pull the headline output file into a binary property so the
+				// next node can pass the produced file along. Only on Get Job, opt-in,
+				// and only when the completed job actually produced a file.
+				if (
+					operation === 'get' &&
+					(this.getNodeParameter('downloadOutput', i, false) as boolean)
+				) {
+					// buildJobItem populated json.file straight from the API's unified
+					// output contract, so it's an OutputFile or null by construction.
+					const file = (item.json.file as OutputFile | null) ?? null;
+					if (file?.url) {
+						const binaryProperty = this.getNodeParameter(
+							'outputBinaryProperty',
+							i,
+							'data',
+						) as string;
+						const fileBuffer = (await this.helpers.httpRequest({
+							method: 'GET',
+							url: file.url,
+							encoding: 'arraybuffer',
+							returnFullResponse: false,
+						})) as ArrayBuffer;
+						item.binary = {
+							[binaryProperty]: await this.helpers.prepareBinaryData(
+								Buffer.from(fileBuffer),
+								file.path,
+							),
+						};
+					}
+				}
+
+				returnData.push(item);
 			} catch (error) {
 				if (this.continueOnFail()) {
 					returnData.push({
