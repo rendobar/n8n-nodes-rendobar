@@ -31,35 +31,75 @@ export async function rendobarApiRequest(
 	return this.helpers.httpRequestWithAuthentication.call(this, 'rendobarApi', options);
 }
 
-// Streams a raw file buffer to POST /uploads (ephemeral R2). The endpoint takes
-// the bytes as the request body and a ?filename query hint, NOT multipart/form,
-// so this can't go through rendobarApiRequest (which sends JSON). Returns the
-// parsed { data: { downloadUrl } } envelope.
+// Uploads a file to Rendobar via the /assets flow (presigned direct-to-R2):
+// init -> PUT bytes to the presigned URL(s) -> complete. The old POST /uploads
+// endpoint was removed; an uploaded file is referenced by its content `url`.
+// Returns the ready asset envelope { data: { id, url, ... } }.
 export async function rendobarUpload(
 	this: IExecuteFunctions,
 	file: Buffer,
 	filename: string,
 	contentType: string,
 ) {
-	const credentials = await this.getCredentials('rendobarApi');
-	const baseUrl = (credentials.baseUrl as string) || 'https://api.rendobar.com';
+	// 1. Init: reserve the asset and get the presigned upload target(s). The init
+	// response is a discriminated union at the top level (status + data + upload),
+	// not a { data } envelope.
+	const init = (await rendobarApiRequest.call(this, 'POST', '/assets', {
+		filename,
+		size: file.length,
+		contentType,
+		lifecycle: 'ephemeral',
+	})) as IDataObject;
 
-	const options: IHttpRequestOptions = {
-		method: 'POST',
-		url: `${baseUrl}/uploads`,
-		qs: { filename },
-		body: file,
-		headers: { 'Content-Type': contentType },
-		// json:false keeps n8n from JSON-stringifying the binary body. The response
-		// is still JSON, so we parse it ourselves below.
-		json: false,
-	};
+	const status = init.status as string;
+	// An identical file already exists for this org — nothing to upload.
+	if (status === 'deduplicated') return init;
 
-	const response = await this.helpers.httpRequestWithAuthentication.call(
+	const asset = init.data as IDataObject;
+	const assetId = asset.id as string;
+	const upload = init.upload as IDataObject;
+
+	// 2. PUT bytes straight to R2. Presigned URLs carry their own SigV4 auth, so
+	// these requests must NOT include the Rendobar credential — use the plain
+	// httpRequest helper, not the authenticated one.
+	let completeBody: IDataObject = {};
+	if (status === 'multipart') {
+		const partSize = upload.partSize as number;
+		const parts = upload.parts as Array<{ partNumber: number; url: string }>;
+		const uploaded: Array<{ partNumber: number; etag: string }> = [];
+		for (const part of parts) {
+			const start = (part.partNumber - 1) * partSize;
+			const chunk = file.subarray(start, Math.min(start + partSize, file.length));
+			const res = (await this.helpers.httpRequest({
+				method: 'PUT',
+				url: part.url,
+				body: chunk,
+				headers: { 'Content-Type': contentType },
+				json: false,
+				returnFullResponse: true,
+			})) as { headers: IDataObject };
+			// R2 returns the part ETag, required to assemble the object at complete.
+			const etag = (res.headers.etag ?? res.headers.ETag) as string;
+			uploaded.push({ partNumber: part.partNumber, etag });
+		}
+		completeBody = { parts: uploaded };
+	} else {
+		// status === 'presigned' (single PUT). The server reads the ETag via
+		// HeadObject at complete, so none is needed in the body.
+		await this.helpers.httpRequest({
+			method: 'PUT',
+			url: upload.url as string,
+			body: file,
+			headers: { 'Content-Type': contentType },
+			json: false,
+		});
+	}
+
+	// 3. Finalize: the API verifies the object landed and marks the asset ready.
+	return (await rendobarApiRequest.call(
 		this,
-		'rendobarApi',
-		options,
-	);
-
-	return typeof response === 'string' ? (JSON.parse(response) as IDataObject) : (response as IDataObject);
+		'POST',
+		`/assets/${encodeURIComponent(assetId)}/complete`,
+		completeBody,
+	)) as IDataObject;
 }
