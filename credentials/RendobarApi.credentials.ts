@@ -39,6 +39,8 @@ export class RendobarApi implements ICredentialType {
 		properties: {
 			headers: {
 				Authorization: '=Bearer {{$credentials.apiKey}}',
+				// Usage attribution: identify this integration as the n8n client.
+				'X-Rendobar-Client': 'n8n',
 			},
 		},
 	};
