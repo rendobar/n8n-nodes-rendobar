@@ -18,7 +18,7 @@
 		"incremental": true,
 		"tsBuildInfoFile": "./node_modules/.cache/n8n-build.tsbuildinfo",
 		"declaration": true,
-		"sourceMap": true,
+		"sourceMap": false,
 		"skipLibCheck": true,
 		"outDir": "./dist/"
 	},

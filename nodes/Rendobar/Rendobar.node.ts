@@ -160,7 +160,7 @@ export class Rendobar implements INodeType {
 						displayName: 'By Name',
 						name: 'id',
 						type: 'string',
-						placeholder: 'e.g. raw.ffmpeg',
+						placeholder: 'e.g. ffmpeg',
 					},
 				],
 			},
