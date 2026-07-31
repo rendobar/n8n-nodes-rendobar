@@ -15,7 +15,8 @@
 		"media"
 	],
 	"author": {
-		"name": "Rendobar"
+		"name": "Rendobar",
+		"email": "hello@rendobar.com"
 	},
 	"repository": {
 		"type": "git",
