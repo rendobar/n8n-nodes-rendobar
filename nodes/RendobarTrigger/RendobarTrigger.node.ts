@@ -23,6 +23,42 @@ export function buildEndpointName(workflowName?: string, nodeName?: string): str
 	return label.slice(0, MAX_ENDPOINT_NAME_LENGTH);
 }
 
+// A path segment that still carries a percent-escape after n8n has written it.
+const PERCENT_ESCAPE = /%[0-9A-Fa-f]{2}/;
+
+// n8n writes and matches a production webhook path with different encodings,
+// and the address it hands a node is the one that does not work.
+//
+// Writing: NodeHelpers.getNodeWebhookPath joins the workflow ID, the node name
+// put through encodeURIComponent, and the webhook's own path, and that string
+// is stored verbatim in webhook_entity.webhookPath.
+// Matching: the production route is `/webhook/*path`, so Express hands the
+// handler segments it has already percent-decoded, which are joined and looked
+// up against webhookPath with an exact string comparison.
+//
+// So a node name that needed escaping never matches its own registration: this
+// node's default name, `Rendobar Trigger`, is stored as `rendobar%20trigger`
+// and arrives as `rendobar trigger`, and every delivery 404s. n8n's own nodes
+// break the same way — the effect is normally hidden because a node carrying a
+// `webhookId` gets a UUID path with no name in it, and n8n assigns one whenever
+// a workflow is saved through its API. A workflow that reached the database by
+// another route (`n8n import:workflow`, a restore, an older export) has no
+// `webhookId`, and then the name is the path.
+//
+// Encoding each segment once more is what closes it: Express's single decode
+// then lands exactly on the string n8n stored. Segments that are already
+// decode-stable — a workflow ID, a UUID, `webhook`, a name that needed no
+// escaping — are left untouched, so this is a no-op for every address that
+// works today.
+export function deliverableWebhookUrl(webhookUrl: string): string {
+	const url = new URL(webhookUrl);
+	url.pathname = url.pathname
+		.split('/')
+		.map((segment) => (PERCENT_ESCAPE.test(segment) ? encodeURIComponent(segment) : segment))
+		.join('/');
+	return url.toString();
+}
+
 /** True when the registration already matches what this node wants delivered. */
 export function registrationMatches(
 	registered: { url?: string; events: string[]; active: boolean },
@@ -136,7 +172,8 @@ export class RendobarTrigger implements INodeType {
 				}
 
 				const endpoint = unwrapData(response.body);
-				const wantedUrl = this.getNodeWebhookUrl('default');
+				const nodeUrl = this.getNodeWebhookUrl('default');
+				const wantedUrl = nodeUrl === undefined ? undefined : deliverableWebhookUrl(nodeUrl);
 				const wantedEvents = selectedEvents(this);
 
 				const registeredUrl = stringAt(endpoint, 'url');
@@ -165,13 +202,14 @@ export class RendobarTrigger implements INodeType {
 			},
 
 			async create(this: IHookFunctions): Promise<boolean> {
-				const webhookUrl = this.getNodeWebhookUrl('default');
-				if (webhookUrl === undefined) {
+				const nodeUrl = this.getNodeWebhookUrl('default');
+				if (nodeUrl === undefined) {
 					throw new NodeOperationError(this.getNode(), 'This node has no webhook address yet', {
 						description:
 							'Save the workflow, then activate it so n8n can hand Rendobar an address to deliver to.',
 					});
 				}
+				const webhookUrl = deliverableWebhookUrl(nodeUrl);
 
 				// The API's create-endpoint schema is { name, url, subscribedEvents }.
 				// `name` is required (1-50 chars) and the event array is

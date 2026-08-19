@@ -120,3 +120,106 @@ test('the trigger deliberately does not advertise itself as an AI tool', () => {
 	// so the only way to say no is to leave the flag off.
 	assert.equal(new RendobarTrigger().description.usableAsTool, undefined);
 });
+
+// The address n8n hands a node is not the address that reaches it again.
+//
+// n8n writes a production webhook path with the node name percent-encoded and
+// stores that string verbatim (webhook_entity.webhookPath), but it matches an
+// inbound request against the path Express has already decoded. Any node name
+// that needed escaping — the default `Rendobar Trigger` has a space — is
+// registered at an address that answers 404 forever. The node re-encodes each
+// segment so n8n's single decode lands back on what it stored.
+const { deliverableWebhookUrl } = require('../dist/nodes/RendobarTrigger/RendobarTrigger.node.js');
+
+const N8N_BASE = 'https://n8n.example.com/webhook';
+
+// Mirrors NodeHelpers.getNodeWebhookPath for a node with no `webhookId`, which
+// is the branch that embeds the node name.
+function n8nStoredPath(workflowId, nodeName, webhookPath) {
+	return `${workflowId}/${encodeURIComponent(nodeName.toLowerCase())}/${webhookPath}`;
+}
+
+// Mirrors the production route `/webhook/*path`: Express hands the handler the
+// wildcard segments already percent-decoded, and n8n joins them and compares
+// the result to the stored path with an exact string match.
+function n8nMatchedPath(url) {
+	return new URL(url).pathname
+		.replace(`${new URL(N8N_BASE).pathname}/`, '')
+		.split('/')
+		.map(decodeURIComponent)
+		.join('/');
+}
+
+// Node names that survive encodeURIComponent unchanged, so their address is
+// already deliverable and must not be touched.
+const PLAIN_NAMES = ['RendobarTrigger', 'rendobar', 'rendobar-trigger', 'trigger_1'];
+
+// Node names n8n escapes on the way in, which is what breaks delivery.
+const ESCAPED_NAMES = [
+	'Rendobar Trigger',
+	'Rendobar  Trigger',
+	'Job done?',
+	'100% done',
+	'a+b',
+	'render/burn',
+	'Rendobar Trigger #2',
+	'Auslösen',
+];
+
+test('an address n8n can still match is handed to Rendobar unchanged', () => {
+	for (const name of PLAIN_NAMES) {
+		const url = `${N8N_BASE}/${n8nStoredPath('wf42', name, 'webhook')}`;
+		assert.equal(deliverableWebhookUrl(url), url, `${name} needed no re-encoding`);
+	}
+	// The path n8n builds for a node that does carry a webhookId has no name in
+	// it at all, and must come through untouched too.
+	const uuidUrl = `${N8N_BASE}/8a51b1d4-9419-4722-8c95-2f61745a0a99/webhook`;
+	assert.equal(deliverableWebhookUrl(uuidUrl), uuidUrl);
+});
+
+test('a delivery address decodes to exactly the path n8n stored', () => {
+	for (const name of [...PLAIN_NAMES, ...ESCAPED_NAMES]) {
+		const stored = n8nStoredPath('wf42', name, 'webhook');
+		const delivered = deliverableWebhookUrl(`${N8N_BASE}/${stored}`);
+		assert.equal(
+			n8nMatchedPath(delivered),
+			stored,
+			`a delivery to ${delivered} would not match the webhook n8n registered for "${name}"`,
+		);
+	}
+});
+
+test('the address n8n reports is the one that misses, which is why it is rewritten', () => {
+	// Pins the defect itself: without the rewrite, an escaped name arrives as
+	// something n8n never stored, so nothing matches and the delivery 404s.
+	for (const name of ESCAPED_NAMES) {
+		const stored = n8nStoredPath('wf42', name, 'webhook');
+		assert.notEqual(
+			n8nMatchedPath(`${N8N_BASE}/${stored}`),
+			stored,
+			`"${name}" was expected to break n8n's own round trip`,
+		);
+	}
+});
+
+test('only the path is rewritten, and only the segments that need it', () => {
+	const delivered = deliverableWebhookUrl(
+		'https://n8n.example.com:5678/hooks/wf42/rendobar%20trigger/webhook?x=1#f',
+	);
+	assert.equal(
+		delivered,
+		'https://n8n.example.com:5678/hooks/wf42/rendobar%2520trigger/webhook?x=1#f',
+	);
+});
+
+test('the default node name is one n8n escapes, so the rewrite stays exercised', () => {
+	// Renaming the node to something space-free would hide the break rather than
+	// fix it — a user can rename a node to anything. Keeping a name n8n has to
+	// escape means the round trip above is what the default configuration runs.
+	const name = new RendobarTrigger().description.defaults.name;
+	assert.notEqual(
+		encodeURIComponent(name.toLowerCase()),
+		name.toLowerCase(),
+		`the default name "${name}" no longer exercises the webhook path rewrite`,
+	);
+});
