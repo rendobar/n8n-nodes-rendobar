@@ -202,3 +202,50 @@ test('guidance lines quote parameter names the way the guidelines require', () =
 		assert.match(description, /'[A-Z][^']*'/, `${code} names a parameter without quoting it`);
 	}
 });
+
+test('a code that no retry can clear is not reported as retryable', () => {
+	// NOT_CONFIGURED answers 503, which is in the retryable status set, but it
+	// means a capability is switched off for the account. Reporting it as
+	// retryable contradicts its own guidance and loops a workflow forever.
+	const details = failureFromResponse(503, { error: { code: 'NOT_CONFIGURED', message: 'off' } });
+	assert.equal(details.retryable, false);
+	assert.match(details.description, /Contact Rendobar support/);
+
+	// A plain 503 with no such code is still retryable.
+	assert.equal(failureFromResponse(503, null).retryable, true);
+	assert.equal(
+		failureFromResponse(501, { error: { code: 'NOT_IMPLEMENTED', message: 'no' } }).retryable,
+		false,
+	);
+});
+
+test('the code the dead-letter consumer actually writes is treated as retryable', () => {
+	// The API writes DISPATCH_EXHAUSTED onto a job it could not dispatch;
+	// DISPATCH_ERROR is the code its own retryable set names. Both must count.
+	for (const code of ['DISPATCH_EXHAUSTED', 'DISPATCH_ERROR', 'RUNNER_ERROR', 'RUNNER_TIMEOUT']) {
+		assert.equal(failureFromJob({ error: { code } }, 'job_x').retryable, true, code);
+	}
+	assert.equal(failureFromJob({ error: { code: 'PROCESSING_FAILED' } }, 'job_x').retryable, false);
+});
+
+test('every code the API can send has guidance that fits it', () => {
+	// CONFLICT is not job-only: the trigger hits it when the account is already
+	// at its webhook endpoint limit, so the copy must not assume a job.
+	const conflict = describeApiCode('CONFLICT');
+	assert.ok(!/^The job /.test(conflict), 'CONFLICT copy assumes a job');
+
+	for (const code of ['QUEUE_EXPIRED', 'HTTP_ERROR']) {
+		assert.ok(describeApiCode(code), `${code} has no guidance line`);
+		assertCleanCopy(describeApiCode(code), `guidance for ${code}`);
+	}
+});
+
+test('an empty httpCode is not read as the status zero', () => {
+	// Number('') is 0 and 0 is finite, so this used to surface as HTTP_0.
+	const { NodeApiError } = require('n8n-workflow');
+	const node = { id: 'n1', name: 'Rendobar', type: 'rendobar', typeVersion: 1, position: [0, 0] };
+	const details = describeFailure(new NodeApiError(node, { message: 'socket hang up' }));
+
+	assert.notEqual(details.code, 'HTTP_0');
+	assert.equal(details.httpStatus, undefined);
+});

@@ -77,6 +77,10 @@ export function unwrapData(response: JsonValue | undefined): JsonObject | undefi
 // collection, a resource-mapper value, a resource locator, …). These read one
 // key off such a value without assuming which member of the union it is.
 
+export function readValue(source: unknown, key: string): unknown {
+	return valueAt(source, key);
+}
+
 function valueAt(source: unknown, key: string): unknown {
 	if (typeof source !== 'object' || source === null) return undefined;
 	if (!(key in source)) return undefined;

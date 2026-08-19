@@ -26,16 +26,20 @@ import {
 	withItemMarker,
 } from './shared/failure';
 import {
+	arrayAt,
+	isJsonObject,
 	numberAt,
 	objectAt,
-	objectsAt,
 	readJsonParameter,
+	readNumber,
 	readObject,
 	readString,
+	readValue,
 	readUnixMs,
 	stringAt,
 	unwrapData,
 	type JsonObject,
+	type JsonValue,
 } from './shared/json';
 import { getJobTypes } from './listSearch/getJobTypes';
 import { getJobs } from './listSearch/getJobs';
@@ -117,6 +121,112 @@ function toWholeNumber(value: unknown, fallback: number, minimum: number): numbe
 	return Math.max(minimum, number);
 }
 
+/**
+ * Serialises a submission the same way every time, whatever order the keys
+ * arrive in. n8n rebuilds a resource-mapper value from the stored parameters on
+ * each run, so relying on insertion order would make the same submission
+ * fingerprint differently between runs.
+ */
+export function stableStringify(value: JsonValue): string {
+	if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+	if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+
+	const body = Object.keys(value)
+		.sort()
+		.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+		.join(',');
+	return `{${body}}`;
+}
+
+/**
+ * A short, stable fingerprint of what is being submitted.
+ *
+ * This is not a security boundary — it only has to differ between two different
+ * submissions, so a pair of FNV-1a-style passes is plenty and keeps the node
+ * free of the `node:crypto` import a verified community node may not have.
+ */
+export function fingerprint(value: JsonValue): string {
+	const text = stableStringify(value);
+	let low = 0x811c9dc5;
+	let high = 0x9e3779b9;
+
+	for (let index = 0; index < text.length; index++) {
+		const code = text.charCodeAt(index);
+		low = Math.imul(low ^ code, 0x01000193) >>> 0;
+		high = Math.imul(high ^ code, 0x85ebca6b) >>> 0;
+	}
+
+	return `${low.toString(36)}${high.toString(36)}`;
+}
+
+/**
+ * How many of a page's usable rows still fit inside 'Limit'.
+ *
+ * The server is trusted to honour the limit that was asked for, but not relied
+ * on: if it ever clamps or ignores it, the surplus is dropped here rather than
+ * handed to the workflow.
+ */
+export function roomFor(limit: number, taken: number, available: number): number {
+	if (limit === Infinity) return available;
+	return Math.min(available, Math.max(0, limit - taken));
+}
+
+/**
+ * Whether the last page was the end of the list.
+ *
+ * `rowCount` is how many rows the API sent, NOT how many survived narrowing: a
+ * row that is not an object still occupies an offset slot, so counting only the
+ * usable ones would re-request it on the next page and read it twice — and
+ * would end a Return All early, because a short page reads as the end.
+ */
+export function pageExhausted(
+	rowCount: number,
+	pageSize: number,
+	offset: number,
+	total?: number,
+): boolean {
+	return rowCount < pageSize || (total !== undefined && offset >= total);
+}
+
+/**
+ * The index of the pass this execution is on.
+ *
+ * On a normal execution `getExecuteData()` carries it. When the node runs as an
+ * AI tool the context is n8n's supply-data shape, whose type does not include
+ * `getExecuteData` at all — so calling it blind throws a TypeError before any
+ * `?.` on the result could help. It is feature-detected instead.
+ *
+ * `getNextRunIndex()`, which that context offers in its place, is deliberately
+ * NOT used as a fallback: it reports where the next run would go, which is not
+ * guaranteed to be the same value when n8n retries this step, and an unstable
+ * component in the idempotency key would submit — and bill — a second job on
+ * every retry. Falling back to 0 is safe because the submission fingerprint,
+ * not the run index, is what separates two different requests.
+ */
+export function currentRunIndex(context: IExecuteFunctions): number {
+	const readExecuteData = Reflect.get(context, 'getExecuteData');
+	if (typeof readExecuteData !== 'function') return 0;
+
+	try {
+		return readNumber(readExecuteData.call(context), 'runIndex') ?? 0;
+	} catch {
+		return 0;
+	}
+}
+
+/**
+ * Reads a Resource Locator parameter down to the identifier it points at.
+ *
+ * A workflow saved before the parameter became a locator stores a plain string.
+ * Asking n8n to extract a value from that is at best a no-op, so extraction is
+ * only requested when there is a locator object to extract from.
+ */
+export function readLocator(context: IExecuteFunctions, name: string, itemIndex: number): unknown {
+	const raw = context.getNodeParameter(name, itemIndex, '');
+	if (typeof raw !== 'object' || raw === null) return raw;
+	return context.getNodeParameter(name, itemIndex, '', { extractValue: true });
+}
+
 /** Raises the n8n error for a parameter the user has to correct. */
 function invalidParameter(
 	node: INode,
@@ -196,7 +306,9 @@ async function waitForJob(
 			);
 		}
 
-		await sleep(pollMs);
+		// Sleeping a full interval past the deadline would overshoot
+		// 'Max Wait (Seconds)' by up to one poll.
+		await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
 	}
 }
 
@@ -233,16 +345,26 @@ async function attachOutputFile(
 	})) as { statusCode: number; body: BinaryPayload };
 
 	if (response.statusCode < 200 || response.statusCode >= 300) {
+		// The body is an open stream even on a rejection. Leaving it dangling
+		// holds the socket until the process notices, so it is closed here before
+		// the throw unwinds.
+		if (!Buffer.isBuffer(response.body)) response.body.destroy();
+
 		const jobId = stringAt(job, 'id') ?? 'this job';
 		const details = failureFromResponse(response.statusCode, null);
+		// A rejection means the link is spent; a stall on the storage side is
+		// transient and worth simply running again. `retryable` already reflects
+		// which one this is, so the advice should match it.
+		const transient = response.statusCode >= 500;
 		throw apiError(
 			this.getNode(),
 			{
 				...details,
 				message: `The output file link for ${jobId} did not open`,
-				description:
-					'Output links are time limited. Run the Get operation again to obtain a fresh link, then download it.',
-				code: 'OUTPUT_LINK_EXPIRED',
+				description: transient
+					? 'The storage behind Rendobar did not answer. Run the workflow again in a moment.'
+					: 'Output links are time limited. Run the Get operation again to obtain a fresh link, then download it.',
+				code: transient ? 'OUTPUT_LINK_UNAVAILABLE' : 'OUTPUT_LINK_EXPIRED',
 			},
 			null,
 			itemIndex,
@@ -711,9 +833,7 @@ export class Rendobar implements INodeType {
 		const operation = toIdentifier(this.getNodeParameter('operation', 0));
 		const executionId = this.getExecutionId();
 		const node = this.getNode();
-		// Present on a normal execution; absent in some tool/partial-execution
-		// contexts, where there is only ever one pass anyway.
-		const runIndex = this.getExecuteData()?.runIndex ?? 0;
+		const runIndex = currentRunIndex(this);
 		const returnData: INodeExecutionData[] = [];
 
 		for (let i = 0; i < items.length; i++) {
@@ -737,26 +857,27 @@ export class Rendobar implements INodeType {
 					const filters = this.getNodeParameter('filters', i, {});
 					const sort = this.getNodeParameter('sort', i, {});
 
-					const createdAfter = readUnixMs(readString(filters, 'from'));
-					const createdBefore = readUnixMs(readString(filters, 'to'));
-					if (readString(filters, 'from') !== undefined && createdAfter === undefined) {
+					// Read raw rather than as a string: an expression can resolve a date
+					// filter to a number of milliseconds, and narrowing to string first
+					// would drop it without a word.
+					const readDate = (name: string, displayName: string): number | undefined => {
+						const raw = readValue(filters, name);
+						if (raw === undefined || raw === null || raw === '') return undefined;
+
+						const parsed = readUnixMs(raw);
+						if (parsed !== undefined) return parsed;
+
 						throw invalidParameter(
 							node,
-							'Created After',
+							displayName,
 							'is not a date n8n could read',
 							'Pick a date from the calendar, or supply an ISO 8601 timestamp such as 2026-08-19T09:00:00Z.',
 							i,
 						);
-					}
-					if (readString(filters, 'to') !== undefined && createdBefore === undefined) {
-						throw invalidParameter(
-							node,
-							'Created Before',
-							'is not a date n8n could read',
-							'Pick a date from the calendar, or supply an ISO 8601 timestamp such as 2026-08-19T09:00:00Z.',
-							i,
-						);
-					}
+					};
+
+					const createdAfter = readDate('from', 'Created After');
+					const createdBefore = readDate('to', 'Created Before');
 
 					const query: Record<string, string | number> = {};
 					const client = readString(filters, 'client');
@@ -773,10 +894,11 @@ export class Rendobar implements INodeType {
 					if (order !== undefined) query.order = order;
 
 					let offset = 0;
+					let taken = 0;
 					for (;;) {
 						const pageSize = Math.min(
 							MAX_PAGE_SIZE,
-							limit === Infinity ? MAX_PAGE_SIZE : limit - offset,
+							limit === Infinity ? MAX_PAGE_SIZE : limit - taken,
 						);
 						const page = await rendobarApiRequest.call(
 							this,
@@ -788,17 +910,22 @@ export class Rendobar implements INodeType {
 							},
 							i,
 						);
-						const jobs = objectsAt(page, 'data');
+						// Paging is driven by the raw row count, not by how many rows
+						// survived narrowing: a row the API sent that is not an object
+						// still occupies an offset slot, so counting only the usable ones
+						// would re-request it on the next page and read it twice.
+						const rows = arrayAt(page, 'data') ?? [];
+						const jobs = rows.filter(isJsonObject);
 
-						for (const job of jobs) {
+						const room = roomFor(limit, taken, jobs.length);
+						for (const job of jobs.slice(0, room)) {
 							returnData.push(buildJobItem(job, i, outputMode, outputFields));
 						}
+						taken += room;
 
-						offset += jobs.length;
+						offset += rows.length;
 						const total = numberAt(objectAt(page, 'meta'), 'total');
-						const exhausted =
-							jobs.length < pageSize || (total !== undefined && offset >= total);
-						if (exhausted || offset >= limit) break;
+						if (pageExhausted(rows.length, pageSize, offset, total) || taken >= limit) break;
 					}
 
 					continue;
@@ -809,7 +936,7 @@ export class Rendobar implements INodeType {
 				if (operation === 'create') {
 					const jobType = requireIdentifier(
 						node,
-						this.getNodeParameter('jobType', i, '', { extractValue: true }),
+						readLocator(this, 'jobType', i),
 						'Job Type',
 						i,
 					);
@@ -825,25 +952,39 @@ export class Rendobar implements INodeType {
 						);
 					}
 
+					const submission: JsonObject = {
+						type: jobType,
+						inputs: parsed.value,
+						params: readObject(this.getNodeParameter('params', i, {}), 'value') ?? {},
+					};
+
+					// The key has to be stable across n8n's retry of this step (so a
+					// transient stall doesn't charge twice) AND different for every
+					// distinct submission. `POST /jobs` looks a repeated key up on
+					// (org, key) alone and never compares payloads, so a colliding key
+					// silently hands back the FIRST job instead of refusing.
+					//
+					// Execution, node, run and item separate the ordinary cases: two
+					// Rendobar nodes in one workflow, the passes of a Loop Over Items,
+					// and the items of one pass. They are not enough on their own,
+					// because this node is `usableAsTool`: an agent calling it twice in
+					// one execution can present the same execution, node, run and item
+					// for two completely different requests, and the second would come
+					// back as the first job's result with its own parameters discarded.
+					//
+					// The fingerprint closes that: different requests fingerprint
+					// differently, while a retry of the same request rebuilds the same
+					// submission and so keeps the same key. Two genuinely identical
+					// requests still collapse onto one job, which is the behaviour
+					// idempotency is for.
+					const idempotencyKey = `n8n:${executionId}:${node.id}:${runIndex}:${i}:${fingerprint(submission)}`;
+
 					const created = await rendobarApiRequest.call(
 						this,
 						{
 							method: 'POST',
 							path: '/jobs',
-							body: {
-								type: jobType,
-								inputs: parsed.value,
-								params: readObject(this.getNodeParameter('params', i, {}), 'value') ?? {},
-								// The key has to be stable across n8n's retry of this step (so a
-								// transient stall doesn't charge twice) AND unique per
-								// submission. The API treats a repeated key as a hit and silently
-								// returns the FIRST job with that key, so a key that collides hands
-								// back another node's result instead of refusing. Node ID separates
-								// two Rendobar nodes in one workflow; run index separates the
-								// passes of a Loop Over Items; item index separates the items of
-								// one pass. All three are stable across a retry.
-								idempotencyKey: `n8n:${executionId}:${node.id}:${runIndex}:${i}`,
-							},
+							body: { ...submission, idempotencyKey },
 							// Safe to repeat: the idempotency key above means a second attempt
 							// settles on the job the first one created rather than a new one.
 							idempotent: true,
@@ -898,7 +1039,7 @@ export class Rendobar implements INodeType {
 				} else {
 					const jobId = requireIdentifier(
 						node,
-						this.getNodeParameter('jobId', i, '', { extractValue: true }),
+						readLocator(this, 'jobId', i),
 						'Job',
 						i,
 					);

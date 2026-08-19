@@ -52,7 +52,10 @@ export class RendobarApi implements ICredentialType {
 	// Validates the key and doubles as the connection label source.
 	test: ICredentialTestRequest = {
 		request: {
-			baseURL: '={{$credentials.baseUrl}}',
+			// Trailing slashes are trimmed the same way the node trims them, so a
+			// base URL that works when the node runs also works when the user
+			// presses Test.
+			baseURL: '={{ $credentials.baseUrl.replace(/[/]+$/, "") }}',
 			url: '/orgs/current',
 			method: 'GET',
 		},

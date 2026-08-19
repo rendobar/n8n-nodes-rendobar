@@ -31,11 +31,22 @@ export const MAX_ATTEMPTS = 3;
 const BASE_RETRY_DELAY_MS = 500;
 const MAX_RETRY_DELAY_MS = 30_000;
 
-// Repeating the identical request may succeed on these. 429 is separate from
-// the rest below: a throttled request never ran, so it is safe to repeat even
-// when the call would otherwise be unsafe to send twice.
 const THROTTLED_STATUS = 429;
 const TRANSIENT_SERVER_STATUS = new Set([500, 502, 503, 504]);
+
+// Rendobar answers 429 for two unrelated reasons and they need opposite
+// handling.
+//
+// `RATE_LIMITED` is raised by middleware before the route body runs, so nothing
+// happened and repeating the call is free.
+//
+// `QUEUE_FULL` is raised deep inside job submission — after the compose-assist
+// window has already probed every input asset and run a model over them, both
+// of which are billed. Repeating that call re-runs and re-bills all of it, and
+// a queue does not drain inside a backoff measured in seconds anyway. So it is
+// reported to the user as something they can retry later, but never retried
+// here.
+const NEVER_RETRIED_CODES = new Set(['QUEUE_FULL']);
 
 export interface RendobarRequest {
 	method: IHttpRequestMethods;
@@ -102,9 +113,19 @@ export function retryDelayMs(attempt: number, retryAfterSeconds?: number): numbe
 	return backoff + Math.floor(Math.random() * backoff);
 }
 
-export function shouldRetryStatus(statusCode: number, idempotent: boolean): boolean {
+export function shouldRetryStatus(
+	statusCode: number,
+	idempotent: boolean,
+	code?: string,
+): boolean {
+	if (code !== undefined && NEVER_RETRIED_CODES.has(code)) return false;
 	if (statusCode === THROTTLED_STATUS) return true;
 	return idempotent && TRANSIENT_SERVER_STATUS.has(statusCode);
+}
+
+/** The Rendobar code on a non-2xx body, when it carries one. */
+function responseCode(body: JsonValue): string | undefined {
+	return stringAt(objectAt(body, 'error'), 'code');
 }
 
 function baseUrlFor(credentials: { baseUrl?: unknown }): string {
@@ -173,7 +194,10 @@ export async function rendobarRequest(
 			continue;
 		}
 
-		if (attempt >= MAX_ATTEMPTS || !shouldRetryStatus(response.statusCode, idempotent)) {
+		if (
+			attempt >= MAX_ATTEMPTS ||
+			!shouldRetryStatus(response.statusCode, idempotent, responseCode(response.body))
+		) {
 			return { statusCode: response.statusCode, body: response.body };
 		}
 
@@ -365,10 +389,12 @@ export function assertWholeFileSent(
 	sent: number,
 	declared: number,
 	itemIndex: number,
+	moreRemaining = false,
 ): void {
-	if (sent === declared) return;
+	if (sent === declared && !moreRemaining) return;
 
-	const message = `The file in 'Input Binary Field' measured ${declared} bytes but ${sent} were read`;
+	const measured = moreRemaining ? `more than ${sent}` : `${sent}`;
+	const message = `The file in 'Input Binary Field' measured ${declared} bytes but ${measured} were read`;
 	throw rememberFailure(
 		new NodeOperationError(node, message, {
 			itemIndex,
@@ -454,6 +480,11 @@ export async function rendobarUpload(
 		const uploaded: JsonObject[] = [];
 		const chunks = chunkStream(source.read(), partSize);
 		let sent = 0;
+		// Rendobar sized the part list from the byte count declared at init. A
+		// source that turned out to be longer fills every one of those parts and
+		// leaves the remainder unsent, and because the parts are full the byte
+		// count alone still adds up — so the leftover has to be looked for.
+		let moreRemaining = false;
 
 		try {
 			for (const part of parts) {
@@ -473,17 +504,16 @@ export async function rendobarUpload(
 				uploaded.push({ partNumber, etag });
 				sent += next.value.length;
 			}
+
+			moreRemaining = (await chunks.next()).done !== true;
 		} finally {
 			// Closes the underlying read, whether the loop finished or threw.
 			await chunks.return(undefined);
 		}
 
-		// Rendobar sized the upload from the byte count declared at init, so a
-		// stream that turned out to be a different length would assemble into a
-		// truncated object rather than announcing itself.
-		assertWholeFileSent(this.getNode(), sent, source.size, itemIndex);
+		assertWholeFileSent(this.getNode(), sent, source.size, itemIndex, moreRemaining);
 		completeBody = { parts: uploaded };
-	} else {
+	} else if (status === 'presigned') {
 		const url = stringAt(upload, 'url');
 		if (url === undefined) {
 			throw malformedUploadResponse(this.getNode(), 'an upload target', itemIndex);
@@ -501,7 +531,15 @@ export async function rendobarUpload(
 		}
 
 		assertWholeFileSent(this.getNode(), sent, source.size, itemIndex);
-		await putChunk(this, url, Buffer.concat(collected, sent), contentType, itemIndex);
+		// Concatenating a single buffer would copy it for nothing, and at this
+		// point that buffer can be the whole 100 MB.
+		const body = collected.length === 1 ? collected[0] : Buffer.concat(collected, sent);
+		await putChunk(this, url, body, contentType, itemIndex);
+	} else {
+		// `POST /assets` answers with presigned, multipart or deduplicated. A
+		// fourth would otherwise fall through the single-PUT branch and send the
+		// file somewhere it does not belong.
+		throw malformedUploadResponse(this.getNode(), 'an upload method this node knows', itemIndex);
 	}
 
 	// 2. Finalize. Verifying an already-verified asset settles to the same

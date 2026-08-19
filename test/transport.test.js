@@ -177,3 +177,34 @@ test('the size guard reports branchable details like everything else', () => {
 		assert.equal(details.retryable, true);
 	}
 });
+
+test('a full queue is never retried inline', () => {
+	// QUEUE_FULL answers 429, but unlike RATE_LIMITED it is raised after the
+	// compose-assist window has already probed the inputs and run a model, both
+	// of which are billed. Retrying re-bills all of it, and a queue does not
+	// drain inside a backoff measured in seconds.
+	assert.equal(shouldRetryStatus(429, true, 'QUEUE_FULL'), false);
+	assert.equal(shouldRetryStatus(429, false, 'QUEUE_FULL'), false);
+
+	// The other 429 is raised by middleware before anything ran, so it is free
+	// to repeat.
+	assert.equal(shouldRetryStatus(429, false, 'RATE_LIMITED'), true);
+	assert.equal(shouldRetryStatus(429, false, undefined), true);
+});
+
+test('a source longer than declared is caught even when the parts divide evenly', () => {
+	// The byte count alone cannot see this: every part comes back full, so the
+	// total matches the declaration exactly while the remainder never ships.
+	const node = { id: 'n1', name: 'Rendobar', type: 'rendobar', typeVersion: 1, position: [0, 0] };
+
+	assert.throws(
+		() => assertWholeFileSent(node, 1000, 1000, 0, true),
+		(error) => {
+			assert.match(error.message, /more than 1000 were read/);
+			return true;
+		},
+	);
+
+	// And the ordinary matching case still passes.
+	assert.equal(assertWholeFileSent(node, 1000, 1000, 0, false), undefined);
+});

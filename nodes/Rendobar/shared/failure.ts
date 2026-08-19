@@ -38,7 +38,21 @@ export const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
 // Job-level codes Rendobar treats as retryable. The API sends `retryable` on the
 // job itself, so this is only the fallback for a job that arrives without it.
-const RETRYABLE_JOB_CODES = new Set(['DISPATCH_ERROR', 'RUNNER_TIMEOUT', 'RUNNER_ERROR']);
+// `DISPATCH_EXHAUSTED` is what the dead-letter consumer actually writes onto a
+// job it could not dispatch; `DISPATCH_ERROR` is the code the API's own
+// retryable set names, so both are honoured here.
+const RETRYABLE_JOB_CODES = new Set([
+	'DISPATCH_ERROR',
+	'DISPATCH_EXHAUSTED',
+	'RUNNER_TIMEOUT',
+	'RUNNER_ERROR',
+]);
+
+// Codes whose HTTP status suggests a retry but whose cause cannot clear on one.
+// `NOT_CONFIGURED` answers 503, yet it means a capability is switched off for
+// the account: repeating the call forever is exactly the wrong advice, and it
+// contradicts the guidance shown beside it.
+const NEVER_RETRYABLE_CODES = new Set(['NOT_CONFIGURED', 'NOT_IMPLEMENTED']);
 
 const GENERIC_DESCRIPTION =
 	'Check the values in this node against the Rendobar dashboard, then run the workflow again.';
@@ -70,7 +84,7 @@ const DESCRIPTIONS: Record<string, string> = {
 		"Rendobar has no job with that ID on this account. Pick one from the 'Job' list, and note that jobs are removed once their retention window passes.",
 	GONE: 'The files for this job have passed their retention window. Submit the job again to produce them afresh.',
 	CONFLICT:
-		'The job is no longer in a state that allows this. Fetch it with the Get operation to see its current status.',
+		'Whatever this applies to is already in a state that rules it out. Check where it stands — a job with the Get operation, anything else in the Rendobar dashboard — then run the workflow again.',
 	VALIDATION_ERROR:
 		"Check 'Job Type', 'Inputs (JSON)' and 'Parameters' against the fields the node loads for that job type, then run the workflow again.",
 	INVALID_JOB_TYPE:
@@ -83,6 +97,10 @@ const DESCRIPTIONS: Record<string, string> = {
 		"The input is not media this job type accepts. Check what 'Inputs (JSON)' points at.",
 	INPUT_UNSUPPORTED:
 		"This job type does not handle that input. Pick a different 'Job Type', or convert the input first.",
+	QUEUE_EXPIRED:
+		'The job waited so long to start that Rendobar cleared it. Submit it again, and if the account is busy let the running jobs finish first.',
+	HTTP_ERROR:
+		'Rendobar could not read the request. Check the values in this node, then run the workflow again.',
 	PROCESSING_FAILED:
 		"Open the job in the Rendobar dashboard to see what the runner reported, adjust 'Inputs (JSON)' or 'Parameters', then run the workflow again.",
 	RUNNER_ERROR: TRANSIENT_DESCRIPTION,
@@ -117,10 +135,20 @@ export function failureFromResponse(
 		message,
 		description: DESCRIPTIONS[code] ?? GENERIC_DESCRIPTION,
 		code,
-		retryable: RETRYABLE_STATUS_CODES.has(statusCode),
+		retryable: isRetryable(statusCode, code),
 		httpStatus: statusCode,
 		...(jobId ? { jobId } : {}),
 	};
+}
+
+/**
+ * Whether repeating the same call could succeed. The status decides it unless
+ * the code says otherwise: a handful of codes answer with a status that reads
+ * transient while describing something no retry can change.
+ */
+export function isRetryable(statusCode: number, code?: string): boolean {
+	if (code !== undefined && NEVER_RETRYABLE_CODES.has(code)) return false;
+	return RETRYABLE_STATUS_CODES.has(statusCode);
 }
 
 /**
@@ -180,7 +208,11 @@ export function describeFailure(error: unknown): FailureDetails {
 	const details = remembered.get(error);
 	if (details) return details;
 
-	const parsed = error instanceof NodeApiError ? Number(error.httpCode) : Number.NaN;
+	// `Number('')` is 0 and 0 is finite, so an empty `httpCode` — which is what
+	// a transport-level failure leaves behind — would otherwise be reported as
+	// the status `HTTP_0`.
+	const reported = error instanceof NodeApiError ? error.httpCode : null;
+	const parsed = reported === null || reported.trim() === '' ? Number.NaN : Number(reported);
 	const httpStatus = Number.isFinite(parsed) ? parsed : undefined;
 
 	// n8n's own error classes carry a `description`; a plain Error does not.
@@ -190,7 +222,7 @@ export function describeFailure(error: unknown): FailureDetails {
 		message: error.message,
 		...(description === undefined ? {} : { description }),
 		code: httpStatus === undefined ? 'NODE_ERROR' : `HTTP_${httpStatus}`,
-		retryable: httpStatus !== undefined && RETRYABLE_STATUS_CODES.has(httpStatus),
+		retryable: httpStatus !== undefined && isRetryable(httpStatus),
 		...(httpStatus === undefined ? {} : { httpStatus }),
 	};
 }
