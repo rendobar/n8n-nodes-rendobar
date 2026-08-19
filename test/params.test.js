@@ -97,3 +97,96 @@ test('the parameter editors sit between Job Type and the waiting controls', () =
 	assert.ok(order.indexOf('paramsJson') > order.indexOf('params'));
 	assert.ok(order.indexOf('waitForCompletion') > order.indexOf('paramsJson'));
 });
+
+// ── Parameters nobody filled in ───────────────────────────────────────────
+//
+// n8n draws a number field with element-plus's InputNumber, which turns the
+// empty input into 0 as it mounts and writes that back into the mapped value.
+// Opening the panel was enough to do it: `ffprobe` came back "Invalid job
+// parameters: Too small: expected number to be >0" for a Timeout nobody had
+// touched, and a fresh `image.upscale` node arrived carrying seed 0, which the
+// API accepts and which quietly pins a generation meant to stay random.
+//
+// Nothing n8n saves separates that 0 from one the user typed — the schema entry
+// beside it is identical either way — so these pin the only fix that can hold:
+// a field n8n would fill in by itself is offered rather than drawn, and
+// whatever the form does hold is sent exactly as it stands.
+
+const { toMapperField } = require('../dist/nodes/Rendobar/methods/getJobFields.js');
+const { providedParams } = require('../dist/nodes/Rendobar/Rendobar.node.js');
+
+// Straight from https://api.rendobar.com/jobs/types/ffprobe/schema.
+const ffprobeFields = [
+	{ name: 'command', label: 'Command', type: 'string', required: true, minLength: 1 },
+	{ name: 'timeout', label: 'Timeout', type: 'number', required: false, max: 9007199254740991 },
+];
+
+// And from .../image.upscale/schema, where 0 is a value the user may well mean.
+const upscaleFields = [
+	{ name: 'inputNoise', label: 'Input noise', type: 'number', required: false, default: 0.1 },
+	{ name: 'seed', label: 'Seed', type: 'number', required: false, min: 0 },
+	{ name: 'passes', label: 'Passes', type: 'number', required: false, min: 1 },
+	{ name: 'colorCorrection', label: 'Color correction', type: 'options', required: false },
+];
+
+test('an optional number the job type gives no default for starts unmapped', () => {
+	const timeout = toMapperField(ffprobeFields[1]);
+	assert.equal(timeout.type, 'number');
+	// `removed` is what keeps the input from being drawn, and an input that is
+	// never drawn can never mount and invent its 0.
+	assert.equal(timeout.removed, true);
+});
+
+test('a number the job type does give a default for stays on the form', () => {
+	// n8n pre-fills this one with 0.1, so its input never mounts empty and there
+	// is nothing to invent. Hiding it would cost the user the default for nothing.
+	const inputNoise = toMapperField(upscaleFields[0]);
+	assert.equal(inputNoise.defaultValue, 0.1);
+	assert.equal(inputNoise.removed, undefined);
+});
+
+test('only numbers start unmapped', () => {
+	// Every other kind of input renders empty and stays empty. `command` is also
+	// required, and a required field must never be hidden — n8n gives no way to
+	// bring it back.
+	assert.equal(toMapperField(ffprobeFields[0]).removed, undefined);
+	assert.equal(toMapperField(upscaleFields[3]).removed, undefined);
+	assert.equal(
+		toMapperField({ name: 'n', type: 'number', required: true }).removed,
+		undefined,
+		'a required number has to stay on the form',
+	);
+});
+
+test('every optional no-default number of image.upscale starts unmapped', () => {
+	// seed and passes are the two that made this urgent: 0 is a legal seed, so
+	// the API cannot reject it and the wrong image comes back instead.
+	for (const field of [upscaleFields[1], upscaleFields[2]]) {
+		assert.equal(toMapperField(field).removed, true, `${field.name} should start unmapped`);
+	}
+});
+
+test('a field the user filled in is sent exactly as it stands', () => {
+	// The deliberate 0 this whole change exists to protect.
+	assert.deepEqual(providedParams({ seed: 0, passes: 2 }), { seed: 0, passes: 2 });
+	assert.deepEqual(providedParams({ outlineWidth: 0, boxOpacity: 0 }), {
+		outlineWidth: 0,
+		boxOpacity: 0,
+	});
+	// And every other value that could be mistaken for absent.
+	assert.deepEqual(providedParams({ a: '', b: false, c: [], d: {} }), {
+		a: '',
+		b: false,
+		c: [],
+		d: {},
+	});
+});
+
+test('a field n8n marks unfilled is not sent at all', () => {
+	// n8n writes null for an empty mapped field. Its editor prunes those before
+	// saving; a workflow built through the REST API keeps them, and the API
+	// refuses a null where it wants a number.
+	assert.deepEqual(providedParams({ command: 'in.mp4', timeout: null }), { command: 'in.mp4' });
+	assert.deepEqual(providedParams({}), {});
+	assert.deepEqual(providedParams({ timeout: null }), {});
+});

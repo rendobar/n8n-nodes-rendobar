@@ -394,6 +394,23 @@ function requireIdentifier(
 }
 
 /**
+ * Drops the mapped parameters n8n marks as unfilled.
+ *
+ * `null` is the resource mapper's own word for a field the user left empty —
+ * it is what n8n writes for one, and what its editor prunes before saving. A
+ * workflow assembled anywhere else, through the REST API or a builder, keeps
+ * those nulls, and Rendobar refuses a null where it expects a number. Every
+ * other value belongs to the user and goes out untouched, `0` included.
+ */
+export function providedParams(params: JsonObject): JsonObject {
+	const provided: JsonObject = {};
+	for (const [name, value] of Object.entries(params)) {
+		if (value !== null) provided[name] = value;
+	}
+	return provided;
+}
+
+/**
  * The job's parameters, from whichever of the two editors is on show.
  *
  * The form is built from the flat field list `GET /jobs/types/:type/schema`
@@ -401,10 +418,16 @@ function requireIdentifier(
  * projection — the API returns no fields for it, and the form would submit an
  * empty object the API then rejects. 'Using JSON' is the way through, and it
  * also covers any job type added after this node was built.
+ *
+ * What the form holds is sent as it stands. Deciding here which values look
+ * deliberate is not open to us: n8n records nothing that separates a `0` the
+ * user typed from one it filled in by itself, and `0` is a real setting for
+ * several parameters. Keeping the form from acquiring a value nobody chose is
+ * `getJobFields`'s job instead.
  */
 function readParams(this: IExecuteFunctions, node: INode, itemIndex: number): JsonObject {
 	if (toIdentifier(this.getNodeParameter('paramsMode', itemIndex, 'fields')) !== 'json') {
-		return readObject(this.getNodeParameter('params', itemIndex, {}), 'value') ?? {};
+		return providedParams(readObject(this.getNodeParameter('params', itemIndex, {}), 'value') ?? {});
 	}
 
 	const parsed = readJsonParameter(this.getNodeParameter('paramsJson', itemIndex, {}));

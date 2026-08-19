@@ -7,7 +7,7 @@ import type {
 } from 'n8n-workflow';
 import { rendobarApiRequest } from '../shared/transport';
 import { arrayAt, isJsonObject, objectAt, objectsAt, booleanAt, stringAt } from '../shared/json';
-import type { JsonValue } from '../shared/json';
+import type { JsonObject, JsonValue } from '../shared/json';
 
 // Rendobar's connector field types map onto n8n's resource-mapper field types.
 // A nested parameter (Rendobar type "json") becomes an object field, which n8n
@@ -20,10 +20,74 @@ const TYPE_MAP: Record<string, FieldType> = {
 	json: 'object',
 };
 
-function defaultValueOf(value: unknown): string | number | boolean | null {
+/** What n8n pre-fills a field with, or null when the job type names no default. */
+type DefaultValue = string | number | boolean | null;
+
+function defaultValueOf(value: unknown): DefaultValue {
 	return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
 		? value
 		: null;
+}
+
+/**
+ * Whether n8n would put a value in this parameter that the user never chose.
+ *
+ * n8n draws a `number` parameter with element-plus's InputNumber, which turns an
+ * empty input into 0 as it mounts and writes that back through the resource
+ * mapper (`element-plus/es/components/input-number/src/input-number2.mjs`,
+ * onMounted: `if (!isNumber(modelValue) && modelValue != null) emit(
+ * UPDATE_MODEL_EVENT, Number(modelValue))`, reached because
+ * `MappingFields.vue` hands an unset field to the input as `''`). Merely
+ * opening the panel is enough: a `timeout` nobody touched reaches `POST /jobs`
+ * as 0, which every job type refuses, and an untouched `seed` reaches it as 0,
+ * which no job type refuses — it silently pins a generation the user meant to
+ * leave random.
+ *
+ * Nothing in what n8n saves tells that 0 apart from one the user typed: the
+ * schema entry it writes alongside is identical either way. So the fix cannot
+ * be to drop zeros on the way out — it has to be to stop n8n inventing one.
+ * A parameter the job type gives a default for is safe, because n8n pre-fills
+ * the input with that number and it never mounts empty. The rest are offered
+ * through n8n's 'Add parameter' menu instead of being drawn, which is n8n's own
+ * idiom for an optional field and leaves the panel honest: what it shows is
+ * exactly what gets sent.
+ */
+function n8nWouldInventAValue(
+	type: FieldType,
+	required: boolean,
+	defaultValue: DefaultValue,
+): boolean {
+	return type === 'number' && !required && defaultValue === null;
+}
+
+/**
+ * Turns one entry of `GET /jobs/types/:type/schema`'s flat field list into the
+ * field n8n maps. An entry with no name is dropped: there is nothing to map to.
+ */
+export function toMapperField(field: JsonObject): ResourceMapperField | undefined {
+	const name = stringAt(field, 'name');
+	if (name === undefined) return undefined;
+
+	const type = TYPE_MAP[stringAt(field, 'type') ?? 'string'] ?? 'string';
+	const required = booleanAt(field, 'required') ?? false;
+	const defaultValue = defaultValueOf(field.default);
+	const options: INodePropertyOptions[] = objectsAt(field, 'options').flatMap((option) => {
+		const value = stringAt(option, 'value');
+		if (value === undefined) return [];
+		return [{ name: stringAt(option, 'label') ?? value, value }];
+	});
+
+	return {
+		id: name,
+		displayName: stringAt(field, 'label') ?? name,
+		required,
+		display: true,
+		defaultMatch: false,
+		type,
+		...(options.length > 0 ? { options } : {}),
+		defaultValue,
+		...(n8nWouldInventAValue(type, required, defaultValue) ? { removed: true } : {}),
+	};
 }
 
 /**
@@ -74,28 +138,8 @@ export async function getJobFields(this: ILoadOptionsFunctions): Promise<Resourc
 
 	const fields: ResourceMapperField[] = objectsAt(objectAt(response, 'data'), 'fields').flatMap(
 		(field) => {
-			const name = stringAt(field, 'name');
-			if (name === undefined) return [];
-
-			const type = stringAt(field, 'type') ?? 'string';
-			const options: INodePropertyOptions[] = objectsAt(field, 'options').flatMap((option) => {
-				const value = stringAt(option, 'value');
-				if (value === undefined) return [];
-				return [{ name: stringAt(option, 'label') ?? value, value }];
-			});
-
-			return [
-				{
-					id: name,
-					displayName: stringAt(field, 'label') ?? name,
-					required: booleanAt(field, 'required') ?? false,
-					display: true,
-					defaultMatch: false,
-					type: TYPE_MAP[type] ?? 'string',
-					...(options.length > 0 ? { options } : {}),
-					defaultValue: defaultValueOf(field.default),
-				},
-			];
+			const mapped = toMapperField(field);
+			return mapped === undefined ? [] : [mapped];
 		},
 	);
 
