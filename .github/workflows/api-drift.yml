@@ -1,0 +1,127 @@
+name: API drift
+
+# Weekly comparison of this node against the live Rendobar platform.
+#
+# Half the node keeps up on its own: the Job Type dropdown and the Parameters
+# form are fetched from the API at design time, so new job types and new
+# parameters reach users with no release. The other half — operations, the
+# credential, the trigger's event list, request bodies — is compiled into the
+# published package and only moves when someone edits it. This watches that
+# half.
+#
+# It REPORTS. It opens or refreshes one tracking issue and closes it when the
+# drift is gone. It never edits node source and never opens a code PR.
+# (Modelled on the monorepo's changelog-candidates workflow.)
+#
+# Both API endpoints it reads are public, so no secret is needed. The built-in
+# GITHUB_TOKEN files the issue in this repo.
+
+on:
+  schedule:
+    - cron: '0 9 * * MON' # Mondays 09:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      LABEL: api-drift
+      TITLE: Node vs platform surface
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+
+      - name: Compare the node against the live API
+        id: check
+        run: |
+          set -euo pipefail
+          node .github/scripts/check-api-drift.mjs > "$RUNNER_TEMP/report.raw"
+
+          # The script ends with a DRIFT_FOUND marker; the issue body is
+          # everything above it.
+          drift=$(grep -m1 '^DRIFT_FOUND=' "$RUNNER_TEMP/report.raw" | cut -d= -f2)
+          grep -v '^DRIFT_FOUND=' "$RUNNER_TEMP/report.raw" > "$RUNNER_TEMP/report.md"
+
+          echo "drift=$drift" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open, refresh, or close the tracking issue
+        env:
+          DRIFT: ${{ steps.check.outputs.drift }}
+        run: |
+          set -uo pipefail
+
+          gh label create "$LABEL" \
+            --repo "$REPO" \
+            --color 1D76DB \
+            --description "Weekly node-vs-platform surface report" \
+            --force || true
+
+          existing=$(gh issue list --repo "$REPO" \
+            --label "$LABEL" --state open \
+            --json number --jq '.[0].number // empty')
+
+          if [ "$DRIFT" != "true" ]; then
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --repo "$REPO" \
+                --body "The node now matches the live platform surface. Closing."
+              gh issue close "$existing" --repo "$REPO"
+              echo "No drift — closed #$existing."
+            else
+              echo "No drift — nothing to report."
+            fi
+            exit 0
+          fi
+
+          if [ -z "$existing" ]; then
+            gh issue create --repo "$REPO" \
+              --title "$TITLE" \
+              --label "$LABEL" \
+              --body-file "$RUNNER_TEMP/report.md"
+            exit 0
+          fi
+
+          # The report carries no timestamp, so an identical body means nothing
+          # about the platform moved this week. Leave the issue untouched rather
+          # than churning it.
+          gh issue view "$existing" --repo "$REPO" --json body --jq .body \
+            | sed 's/\r$//' > "$RUNNER_TEMP/current.md"
+
+          if diff -q "$RUNNER_TEMP/current.md" "$RUNNER_TEMP/report.md" > /dev/null; then
+            echo "Unchanged since the last run — #$existing left alone."
+            exit 0
+          fi
+
+          gh issue edit "$existing" --repo "$REPO" --body-file "$RUNNER_TEMP/report.md"
+
+          # Editing a body sends no notification, so say what appeared.
+          added=$(grep -Fxv -f "$RUNNER_TEMP/current.md" "$RUNNER_TEMP/report.md" \
+            | grep '^- ' | head -30 || true)
+
+          {
+            echo "The platform surface changed since the last run."
+            echo
+            if [ -n "$added" ]; then
+              echo "New in the report:"
+              echo
+              echo "$added"
+              echo
+            fi
+            echo "Full report in the issue body. [Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          } > "$RUNNER_TEMP/comment.md"
+
+          gh issue comment "$existing" --repo "$REPO" --body-file "$RUNNER_TEMP/comment.md"
+          echo "Refreshed #$existing."

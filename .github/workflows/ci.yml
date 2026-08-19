@@ -11,15 +11,19 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 'lts/*'
           cache: 'npm'
@@ -27,8 +31,77 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # `n8n-node lint` runs `eslint .` with @n8n/node-cli's shared config, and
+      # in strict mode (package.json `n8n.strict`) also asserts eslint.config.mjs
+      # still matches the template. There is no separate lint CLI to call.
       - name: Run lint
         run: npm run lint
 
       - name: Run build
         run: npm run build
+
+      # The scanner pins its own eslint and TypeScript, so it goes in a scratch
+      # directory rather than this project's node_modules. Deliberately not
+      # version-pinned: n8n reviewers run whatever is latest, so CI should meet
+      # a new rule before the reviewer does. It needs Linux — a transitive
+      # peer (isolated-vm, via n8n-workflow) has no usable Windows build.
+      - name: Install the n8n community-package scanner
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/n8n-scanner"
+          cd "$RUNNER_TEMP/n8n-scanner"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund @n8n/scan-community-package@latest
+
+      # Runs n8n's own scan rules against this commit and against the tarball
+      # `npm publish` would upload. Stricter than `npm run lint`: inline
+      # eslint-disable comments are ignored. Output lands in the job summary.
+      - name: Scan this commit with the n8n community-package scanner
+        run: node .github/scripts/scan-package.mjs "$RUNNER_TEMP/n8n-scanner"
+
+  scan-published:
+    name: Scan published package
+    # `npx @n8n/scan-community-package <package-name>` resolves a version from
+    # npm — it cannot be pointed at a working tree. So it checks what is already
+    # public (provenance, the attested source checkout, the shipped tarball),
+    # which says nothing about a pull request's changes; the `build` job covers
+    # those. Running it on main keeps the npm artifact honest between releases.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 'lts/*'
+
+      - name: Scan the published package
+        run: |
+          set -uo pipefail
+          package=$(node -p "require('./package.json').name")
+          log="$RUNNER_TEMP/scan-published.log"
+
+          npx --yes @n8n/scan-community-package@latest "$package" > "$log" 2>&1 || true
+          cat "$log"
+
+          {
+            echo "## n8n community-package scan (published on npm)"
+            echo
+            echo "\`npx @n8n/scan-community-package $package\` — the invocation n8n names."
+            echo "Checks the latest published version's provenance, its attested source, and"
+            echo "the shipped tarball. Not this commit."
+            echo
+            echo '```'
+            cat "$log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # The CLI reports a failed scan on stdout and still exits 0, so the
+          # verdict has to be read out of its output.
+          if ! grep -q 'passed all security checks' "$log"; then
+            echo "::error::The published package did not pass n8n's community-package scan"
+            exit 1
+          fi
