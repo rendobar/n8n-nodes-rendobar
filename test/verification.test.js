@@ -190,3 +190,22 @@ test('a resource-locator parameter in the examples uses the locator shape', () =
 	}
 	assert.ok(seen >= 2, 'the examples no longer exercise the resource locators');
 });
+
+test('both nodes ship a codex file pointing at the documentation', () => {
+	// Without one, n8n shows the node with no documentation link and no category.
+	const { Rendobar } = require('../dist/nodes/Rendobar/Rendobar.node.js');
+	const { RendobarTrigger } = require('../dist/nodes/RendobarTrigger/RendobarTrigger.node.js');
+
+	const cases = [
+		['dist/nodes/Rendobar/Rendobar.node.json', new Rendobar().description.name],
+		['dist/nodes/RendobarTrigger/RendobarTrigger.node.json', new RendobarTrigger().description.name],
+	];
+
+	for (const [file, nodeName] of cases) {
+		const codex = JSON.parse(readFileSync(join(root, ...file.split('/')), 'utf8'));
+		assert.equal(codex.node, `${pkg.name}.${nodeName}`, `${file} names the wrong node`);
+		assert.ok(codex.categories.length > 0, `${file} has no category`);
+		assert.ok(codex.resources.primaryDocumentation[0].url.startsWith('https://'));
+		assert.ok(codex.resources.credentialDocumentation[0].url.startsWith('https://'));
+	}
+});

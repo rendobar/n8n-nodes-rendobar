@@ -1,0 +1,18 @@
+{
+	"node": "@rendobar/n8n-nodes-rendobar.rendobarTrigger",
+	"nodeVersion": "1.0",
+	"codexVersion": "1.0",
+	"categories": ["Marketing", "Development", "Utility"],
+	"resources": {
+		"credentialDocumentation": [
+			{
+				"url": "https://rendobar.com/docs"
+			}
+		],
+		"primaryDocumentation": [
+			{
+				"url": "https://rendobar.com/docs"
+			}
+		]
+	}
+}
