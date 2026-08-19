@@ -15,8 +15,11 @@
 		"preserveConstEnums": true,
 		"esModuleInterop": true,
 		"resolveJsonModule": true,
-		"incremental": true,
-		"tsBuildInfoFile": "./node_modules/.cache/n8n-build.tsbuildinfo",
+		// NOT incremental. `n8n-node build` deletes dist/ and then runs tsc, so a
+		// surviving .tsbuildinfo makes tsc skip every file it considers unchanged
+		// and the build silently emits a partial dist/ (a package missing
+		// transport.js loads as a broken node in n8n). The full build takes a few
+		// seconds; correctness is worth more.
 		"declaration": true,
 		"sourceMap": false,
 		"skipLibCheck": true,

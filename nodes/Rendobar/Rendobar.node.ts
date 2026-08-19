@@ -5,6 +5,7 @@ import {
 	sleep,
 	type IExecuteFunctions,
 	type INodeExecutionData,
+	type INodePropertyOptions,
 	type INodeType,
 	type INodeTypeDescription,
 	type IDataObject,
@@ -13,8 +14,12 @@ import {
 import { rendobarApiRequest, rendobarUpload } from './shared/transport';
 import { getJobTypes } from './listSearch/getJobTypes';
 import { getJobFields } from './methods/getJobFields';
+import { buildJobItem, JOB_FIELDS, titleCaseFieldName, type OutputMode } from './shared/output';
 
 const TERMINAL_STATUSES = new Set(['complete', 'failed', 'cancelled']);
+
+// GET /jobs caps a page at 100. Return All walks pages of this size.
+const MAX_PAGE_SIZE = 100;
 
 // A produced file in the unified job output. `url` is a ready-to-fetch,
 // time-limited URL; `type` is an open enum (video|image|audio|captions|
@@ -27,28 +32,22 @@ interface OutputFile {
 	meta?: IDataObject;
 }
 
-// Every Rendobar job, for every job type, returns ONE output shape when it
-// completes:
-//   data      — job-type-specific computed result (probe/detections/transcript),
-//               or null for file-only jobs.
-//   file      — the headline result: a single output file OR a stream manifest
-//               (.m3u8/.mpd). Always one of `files`. Null for data-only jobs/sets.
-//   files     — every produced file, the complete list. [] for data-only jobs.
-//   expiresAt — Unix ms when the file URLs expire, or null when there are none.
-// We keep the full job under `json` and also lift these four fields to the top
-// of the item so downstream nodes get clean, predictable fields without having
-// to dig into `output` (and without narrowing on a per-job-type shape).
-function buildJobItem(job: IDataObject, itemIndex: number): INodeExecutionData {
-	const json: IDataObject = { ...job };
-	const output = job.output as IDataObject | undefined;
-	if (output) {
-		json.data = output.data ?? null;
-		json.file = (output.file as IDataObject | null) ?? null;
-		json.files = (output.files as IDataObject[]) ?? [];
-		json.expiresAt = output.expiresAt ?? null;
-	}
-	return { json, pairedItem: { item: itemIndex } };
-}
+// Acronyms the generic humanizer would title-case into something n8n's style
+// guide rejects ("Id", "Url").
+const FIELD_LABEL_OVERRIDES: Record<string, string> = {
+	id: 'ID',
+	orgId: 'Org ID',
+	webUrl: 'Web URL',
+	eta: 'ETA',
+	timeoutMs: 'Timeout Ms',
+};
+
+// Derived from the single source of truth in shared/output.ts, which is already
+// sorted, so the dropdown reads alphabetically without a second hand-kept list.
+const JOB_FIELD_OPTIONS: INodePropertyOptions[] = JOB_FIELDS.map((field) => ({
+	name: FIELD_LABEL_OVERRIDES[field] ?? titleCaseFieldName(field),
+	value: field,
+}));
 
 // Poll GET /jobs/:id until the job reaches a terminal state or maxWait elapses.
 // Rendobar has no server-side wait endpoint and CF Workers can't hold a long
@@ -74,7 +73,9 @@ async function waitForJob(
 			if (job.status === 'failed') {
 				throw new NodeApiError(this.getNode(), job as JsonObject, {
 					itemIndex,
-					message: `Job ${jobId} failed`,
+					message: `Rendobar could not complete job ${jobId}`,
+					description:
+						'Open the job in the Rendobar dashboard to see the underlying error, correct the inputs or parameters, then run the workflow again.',
 				});
 			}
 			return response;
@@ -83,8 +84,12 @@ async function waitForJob(
 		if (Date.now() >= deadline) {
 			throw new NodeOperationError(
 				this.getNode(),
-				`Job ${jobId} did not finish within ${Math.round(maxWaitMs / 1000)}s. It is still running — fetch it later with Get Job, or use the Rendobar Trigger node.`,
-				{ itemIndex },
+				`Job ${jobId} is still running after ${Math.round(maxWaitMs / 1000)}s`,
+				{
+					itemIndex,
+					description:
+						'Fetch it later with Get Job, or start the workflow from the Rendobar Trigger node, which is event-driven and does not block. Raising Max Wait also works for jobs that just need longer.',
+				},
 			);
 		}
 
@@ -96,10 +101,10 @@ export class Rendobar implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Rendobar',
 		name: 'rendobar',
-		icon: 'file:../../icons/rendobar.svg',
+		icon: { light: 'file:../../icons/rendobar.svg', dark: 'file:../../icons/rendobar.dark.svg' },
 		group: ['transform'],
 		version: 1,
-		subtitle: '={{$parameter["operation"]}}',
+		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
 		description: 'Submit, fetch, and cancel Rendobar media processing jobs',
 		defaults: { name: 'Rendobar' },
 		usableAsTool: true,
@@ -108,38 +113,72 @@ export class Rendobar implements INodeType {
 		credentials: [{ name: 'rendobarApi', required: true }],
 		properties: [
 			{
-				displayName: 'Operation',
-				name: 'operation',
+				displayName: 'Resource',
+				name: 'resource',
 				type: 'options',
 				noDataExpression: true,
 				options: [
 					{
-						name: 'Cancel Job',
+						name: 'File',
+						value: 'file',
+					},
+					{
+						name: 'Job',
+						value: 'job',
+					},
+				],
+				default: 'job',
+			},
+			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				displayOptions: { show: { resource: ['job'] } },
+				options: [
+					{
+						name: 'Cancel',
 						value: 'cancel',
-						action: 'Cancel a job',
+						action: 'Cancel job',
 						description: 'Cancel a job that is still running',
 					},
 					{
-						name: 'Create Job',
+						name: 'Create',
 						value: 'create',
-						action: 'Create a job',
+						action: 'Create job',
 						description: 'Submit a new media processing job',
 					},
 					{
-						name: 'Get Job',
+						name: 'Get',
 						value: 'get',
-						action: 'Get a job',
+						action: 'Get job',
 						description: 'Fetch a job by ID, including its status and output',
 					},
 					{
-						name: 'Upload File',
+						name: 'Get Many',
+						value: 'getAll',
+						action: 'Get many jobs',
+						description: 'List many jobs, newest first, with optional filters',
+					},
+				],
+				default: 'create',
+			},
+			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				displayOptions: { show: { resource: ['file'] } },
+				options: [
+					{
+						name: 'Upload',
 						value: 'upload',
-						action: 'Upload a file',
+						action: 'Upload file',
 						description:
 							'Upload a binary file from a previous node and get a URL to use as a job input',
 					},
 				],
-				default: 'create',
+				default: 'upload',
 			},
 			{
 				displayName: 'Job Type',
@@ -147,7 +186,7 @@ export class Rendobar implements INodeType {
 				type: 'resourceLocator',
 				default: { mode: 'list', value: '' },
 				required: true,
-				displayOptions: { show: { operation: ['create'] } },
+				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
 				description: 'The job type to run. The list is discovered live from your account.',
 				modes: [
 					{
@@ -169,7 +208,7 @@ export class Rendobar implements INodeType {
 				name: 'inputs',
 				type: 'json',
 				default: '{}',
-				displayOptions: { show: { operation: ['create'] } },
+				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
 				description: 'Input files for the job, e.g. { "source": "https://example.com/video.mp4" }',
 			},
 			{
@@ -178,7 +217,7 @@ export class Rendobar implements INodeType {
 				type: 'resourceMapper',
 				noDataExpression: true,
 				default: { mappingMode: 'defineBelow', value: null },
-				displayOptions: { show: { operation: ['create'] } },
+				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
 				typeOptions: {
 					loadOptionsDependsOn: ['jobType.value'],
 					resourceMapper: {
@@ -195,7 +234,7 @@ export class Rendobar implements INodeType {
 				name: 'waitForCompletion',
 				type: 'boolean',
 				default: false,
-				displayOptions: { show: { operation: ['create'] } },
+				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
 				description:
 					'Whether to wait until the job finishes and return its result. Good for short jobs. For long jobs prefer the Rendobar Trigger node, which is event-driven and does not block the workflow.',
 			},
@@ -205,7 +244,9 @@ export class Rendobar implements INodeType {
 				type: 'number',
 				default: 5,
 				typeOptions: { minValue: 2 },
-				displayOptions: { show: { operation: ['create'], waitForCompletion: [true] } },
+				displayOptions: {
+					show: { resource: ['job'], operation: ['create'], waitForCompletion: [true] },
+				},
 				description: 'How often to check the job status while waiting',
 			},
 			{
@@ -214,7 +255,9 @@ export class Rendobar implements INodeType {
 				type: 'number',
 				default: 300,
 				typeOptions: { minValue: 5 },
-				displayOptions: { show: { operation: ['create'], waitForCompletion: [true] } },
+				displayOptions: {
+					show: { resource: ['job'], operation: ['create'], waitForCompletion: [true] },
+				},
 				description: 'Stop waiting and raise an error after this many seconds',
 			},
 			{
@@ -223,7 +266,7 @@ export class Rendobar implements INodeType {
 				type: 'string',
 				default: '',
 				required: true,
-				displayOptions: { show: { operation: ['get', 'cancel'] } },
+				displayOptions: { show: { resource: ['job'], operation: ['get', 'cancel'] } },
 				placeholder: 'e.g. job_abc123',
 				description: 'The ID of the job',
 			},
@@ -232,7 +275,7 @@ export class Rendobar implements INodeType {
 				name: 'downloadOutput',
 				type: 'boolean',
 				default: false,
-				displayOptions: { show: { operation: ['get'] } },
+				displayOptions: { show: { resource: ['job'], operation: ['get'] } },
 				description:
 					"Whether to download the headline output file (the result's file URL) into a binary property so the next node can use it directly. Only applies to completed jobs that produced a file.",
 			},
@@ -241,9 +284,71 @@ export class Rendobar implements INodeType {
 				name: 'outputBinaryProperty',
 				type: 'string',
 				default: 'data',
-				displayOptions: { show: { operation: ['get'], downloadOutput: [true] } },
-				placeholder: 'data',
+				displayOptions: {
+					show: { resource: ['job'], operation: ['get'], downloadOutput: [true] },
+				},
+				placeholder: 'e.g. data',
 				description: 'Name of the binary property to store the downloaded output file under',
+			},
+			{
+				displayName: 'Return All',
+				name: 'returnAll',
+				type: 'boolean',
+				default: false,
+				displayOptions: { show: { resource: ['job'], operation: ['getAll'] } },
+				description: 'Whether to return all results or only up to a given limit',
+			},
+			{
+				displayName: 'Limit',
+				name: 'limit',
+				type: 'number',
+				default: 50,
+				typeOptions: { minValue: 1 },
+				displayOptions: {
+					show: { resource: ['job'], operation: ['getAll'], returnAll: [false] },
+				},
+				description: 'Max number of results to return',
+			},
+			{
+				displayName: 'Filters',
+				name: 'filters',
+				type: 'collection',
+				placeholder: 'Add Filter',
+				default: {},
+				displayOptions: { show: { resource: ['job'], operation: ['getAll'] } },
+				options: [
+					{
+						displayName: 'Client',
+						name: 'client',
+						type: 'string',
+						default: '',
+						placeholder: 'e.g. n8n',
+						description: 'Only return jobs submitted by this client',
+					},
+					{
+						displayName: 'Job Type',
+						name: 'type',
+						type: 'string',
+						default: '',
+						placeholder: 'e.g. ffmpeg',
+						description: 'Only return jobs of this job type',
+					},
+					{
+						displayName: 'Status',
+						name: 'status',
+						type: 'options',
+						default: 'complete',
+						description: 'Only return jobs in this status',
+						options: [
+							{ name: 'Cancelled', value: 'cancelled' },
+							{ name: 'Complete', value: 'complete' },
+							{ name: 'Dispatched', value: 'dispatched' },
+							{ name: 'Failed', value: 'failed' },
+							{ name: 'Running', value: 'running' },
+							{ name: 'Waiting', value: 'waiting' },
+						],
+					},
+				],
 			},
 			{
 				displayName: 'Input Binary Field',
@@ -251,8 +356,8 @@ export class Rendobar implements INodeType {
 				type: 'string',
 				default: 'data',
 				required: true,
-				displayOptions: { show: { operation: ['upload'] } },
-				placeholder: 'data',
+				displayOptions: { show: { resource: ['file'], operation: ['upload'] } },
+				placeholder: 'e.g. data',
 				hint: 'The name of the input field holding the binary file to upload',
 				description:
 					'Name of the binary property from a previous node that contains the file to upload',
@@ -262,10 +367,46 @@ export class Rendobar implements INodeType {
 				name: 'uploadFilename',
 				type: 'string',
 				default: '',
-				displayOptions: { show: { operation: ['upload'] } },
+				displayOptions: { show: { resource: ['file'], operation: ['upload'] } },
 				placeholder: 'e.g. clip.mp4',
 				description:
 					"Override the filename sent to Rendobar. Defaults to the binary data's own file name.",
+			},
+			{
+				displayName: 'Output',
+				name: 'output',
+				type: 'options',
+				default: 'simplified',
+				displayOptions: { show: { resource: ['job'] } },
+				description:
+					'How much of the job to put on the item. A raw job carries around 32 fields, which is more than most workflows need and more than an AI agent can usefully read.',
+				options: [
+					{
+						name: 'Raw',
+						value: 'raw',
+						description: 'Return every field the API sends back',
+					},
+					{
+						name: 'Selected Fields',
+						value: 'selected',
+						description: 'Return only the fields you pick, plus the job ID',
+					},
+					{
+						name: 'Simplified',
+						value: 'simplified',
+						description:
+							'Return the ten fields workflows use: ID, type, status, cost, output, timings',
+					},
+				],
+			},
+			{
+				displayName: 'Fields',
+				name: 'outputFields',
+				type: 'multiOptions',
+				default: ['status', 'data', 'file'],
+				displayOptions: { show: { resource: ['job'], output: ['selected'] } },
+				description: 'The job fields to return. The job ID is always included.',
+				options: JOB_FIELD_OPTIONS,
 			},
 		],
 	};
@@ -277,12 +418,60 @@ export class Rendobar implements INodeType {
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
+		// Branch on `operation` rather than `resource`: operation values are unique
+		// across resources, so workflows saved before the Resource selector existed
+		// keep executing unchanged.
 		const operation = this.getNodeParameter('operation', 0) as string;
 		const executionId = this.getExecutionId();
+		const nodeId = this.getNode().id;
+		// Present on a normal execution; absent in some tool/partial-execution
+		// contexts, where there is only ever one pass anyway.
+		const runIndex = this.getExecuteData()?.runIndex ?? 0;
 		const returnData: INodeExecutionData[] = [];
 
 		for (let i = 0; i < items.length; i++) {
 			try {
+				const outputMode =
+					operation === 'upload'
+						? 'raw'
+						: (this.getNodeParameter('output', i, 'simplified') as OutputMode);
+				const outputFields =
+					outputMode === 'selected'
+						? (this.getNodeParameter('outputFields', i, []) as string[])
+						: [];
+
+				if (operation === 'getAll') {
+					const returnAll = this.getNodeParameter('returnAll', i, false) as boolean;
+					const filters = this.getNodeParameter('filters', i, {}) as IDataObject;
+					const limit = returnAll ? Infinity : (this.getNodeParameter('limit', i, 50) as number);
+
+					let offset = 0;
+					for (;;) {
+						const pageSize = Math.min(
+							MAX_PAGE_SIZE,
+							limit === Infinity ? MAX_PAGE_SIZE : limit - offset,
+						);
+						const page = (await rendobarApiRequest.call(this, 'GET', '/jobs', undefined, {
+							...filters,
+							limit: pageSize,
+							offset,
+						})) as IDataObject;
+						const jobs = (page.data as IDataObject[]) ?? [];
+
+						for (const job of jobs) {
+							returnData.push(buildJobItem(job, i, outputMode, outputFields));
+						}
+
+						offset += jobs.length;
+						const total = (page.meta as IDataObject | undefined)?.total as number | undefined;
+						const exhausted =
+							jobs.length < pageSize || (typeof total === 'number' && offset >= total);
+						if (exhausted || offset >= limit) break;
+					}
+
+					continue;
+				}
+
 				let responseData: IDataObject;
 
 				if (operation === 'create') {
@@ -290,17 +479,22 @@ export class Rendobar implements INodeType {
 						extractValue: true,
 					}) as string;
 					const inputsRaw = this.getNodeParameter('inputs', i, {}) as IDataObject | string;
-					const inputs =
-						typeof inputsRaw === 'string' ? JSON.parse(inputsRaw || '{}') : inputsRaw;
+					const inputs = typeof inputsRaw === 'string' ? JSON.parse(inputsRaw || '{}') : inputsRaw;
 					const mapper = this.getNodeParameter('params', i, {}) as { value?: IDataObject | null };
 
 					responseData = (await rendobarApiRequest.call(this, 'POST', '/jobs', {
 						type: jobType,
 						inputs,
 						params: mapper.value ?? {},
-						// Stable per execution+item so n8n's retry on a transient failure
-						// reuses the same job instead of charging twice.
-						idempotencyKey: `n8n:${executionId}:${i}`,
+						// The key has to be stable across n8n's retry of this step (so a
+						// transient failure doesn't charge twice) AND unique per
+						// submission. The API treats a repeated key as a hit and silently
+						// returns the FIRST job with that key, so a key that collides hands
+						// back another node's result instead of erroring. Node ID separates
+						// two Rendobar nodes in one workflow; run index separates the
+						// passes of a Loop Over Items; item index separates the items of
+						// one pass. All three are stable across a retry.
+						idempotencyKey: `n8n:${executionId}:${nodeId}:${runIndex}:${i}`,
 					})) as IDataObject;
 
 					if (this.getNodeParameter('waitForCompletion', i, false) as boolean) {
@@ -333,18 +527,16 @@ export class Rendobar implements INodeType {
 				}
 
 				const job = (responseData.data as IDataObject) ?? responseData;
-				const item = buildJobItem(job, i);
+				const item = buildJobItem(job, i, outputMode, outputFields);
 
 				// Optional: pull the headline output file into a binary property so the
 				// next node can pass the produced file along. Only on Get Job, opt-in,
 				// and only when the completed job actually produced a file.
-				if (
-					operation === 'get' &&
-					(this.getNodeParameter('downloadOutput', i, false) as boolean)
-				) {
-					// buildJobItem populated json.file straight from the API's unified
-					// output contract, so it's an OutputFile or null by construction.
-					const file = (item.json.file as OutputFile | null) ?? null;
+				if (operation === 'get' && (this.getNodeParameter('downloadOutput', i, false) as boolean)) {
+					// `file` comes straight from the API's unified output contract, so
+					// it's an OutputFile or null by construction. Read it off the job
+					// rather than the item, which may have been narrowed by Output.
+					const file = ((job.output as IDataObject | undefined)?.file as OutputFile | null) ?? null;
 					if (file?.url) {
 						const binaryProperty = this.getNodeParameter(
 							'outputBinaryProperty',
@@ -379,10 +571,11 @@ export class Rendobar implements INodeType {
 					continue;
 				}
 				// waitForJob already throws well-formed n8n errors; re-wrapping them
-				// would double-wrap and turn a wait timeout into an API error.
-				// eslint-disable-next-line @n8n/community-nodes/require-node-api-error -- error is already a NodeApiError/NodeOperationError here
-				if (error instanceof NodeApiError || error instanceof NodeOperationError) throw error;
-				throw new NodeApiError(this.getNode(), error as JsonObject, { itemIndex: i });
+				// would double-wrap and turn a wait timeout into an API error. Every
+				// branch still throws a NodeApiError or a NodeOperationError.
+				throw error instanceof NodeApiError || error instanceof NodeOperationError
+					? error
+					: new NodeApiError(this.getNode(), error as JsonObject, { itemIndex: i });
 			}
 		}
 

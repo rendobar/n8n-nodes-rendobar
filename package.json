@@ -1,6 +1,6 @@
 {
 	"name": "@rendobar/n8n-nodes-rendobar",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"description": "Rendobar media processing for n8n: submit, track, and cancel video jobs, and trigger on completion.",
 	"license": "MIT",
 	"homepage": "https://rendobar.com",
@@ -28,6 +28,8 @@
 		"dev": "n8n-node dev",
 		"lint": "n8n-node lint",
 		"lint:fix": "n8n-node lint --fix",
+		"test": "npm run lint && npm run build && npm run test:unit",
+		"test:unit": "node --test \"test/*.test.js\"",
 		"release": "n8n-node release",
 		"prepublishOnly": "n8n-node prerelease"
 	},
@@ -46,7 +48,7 @@
 		]
 	},
 	"devDependencies": {
-		"@n8n/node-cli": "*",
+		"@n8n/node-cli": "^0.41.2",
 		"eslint": "9.29.0",
 		"prettier": "3.8.3",
 		"release-it": "20.2.0",

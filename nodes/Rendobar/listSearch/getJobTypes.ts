@@ -25,7 +25,10 @@ export async function getJobTypes(
 
 	const term = filter?.toLowerCase();
 	const results: INodeListSearchItems[] = (response.data ?? [])
-		.filter((t) => !term || t.type.toLowerCase().includes(term) || t.summary?.toLowerCase().includes(term))
+		.filter(
+			(t) =>
+				!term || t.type.toLowerCase().includes(term) || t.summary?.toLowerCase().includes(term),
+		)
 		.map((t) => ({
 			name: t.summary ? `${t.type}: ${t.summary}` : t.type,
 			value: t.type,
