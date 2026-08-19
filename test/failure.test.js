@@ -219,13 +219,72 @@ test('a code that no retry can clear is not reported as retryable', () => {
 	);
 });
 
-test('the code the dead-letter consumer actually writes is treated as retryable', () => {
-	// The API writes DISPATCH_EXHAUSTED onto a job it could not dispatch;
-	// DISPATCH_ERROR is the code its own retryable set names. Both must count.
-	for (const code of ['DISPATCH_EXHAUSTED', 'DISPATCH_ERROR', 'RUNNER_ERROR', 'RUNNER_TIMEOUT']) {
+test('the fallback set matches every code the API calls retryable', () => {
+	// Mirrors RETRYABLE_ERROR_CODES in the API's lib/job-utils.ts. Each of these
+	// describes a job that never reached a runner, so a retry costs nothing. A
+	// code missing from here is reported as terminal to a workflow that routes
+	// on `retryable`, which is how the whole dispatch family was misclassified
+	// once already.
+	for (const code of [
+		'DISPATCH_EXHAUSTED',
+		'DISPATCH_UNAVAILABLE',
+		'PROVIDER_CLEARED',
+		'P1_EXECUTION_ERROR',
+		'RUNNER_TIMEOUT',
+		'RUNNER_ERROR',
+		// The retired name for the dispatch family. Nothing writes it now, but a
+		// job old enough to carry it has to classify the same way.
+		'DISPATCH_ERROR',
+	]) {
 		assert.equal(failureFromJob({ error: { code } }, 'job_x').retryable, true, code);
 	}
-	assert.equal(failureFromJob({ error: { code: 'PROCESSING_FAILED' } }, 'job_x').retryable, false);
+
+	for (const code of ['PROCESSING_FAILED', 'VALIDATION_ERROR', 'INPUT_FETCH_FAILED']) {
+		assert.equal(failureFromJob({ error: { code } }, 'job_x').retryable, false, code);
+	}
+});
+
+test('a crashed provider run is never reported as retryable by the fallback', () => {
+	// PROVIDER_CRASHED is deliberately outside the API's retryable set: the run
+	// started, so it is billed. A workflow that routes `retryable` into a retry
+	// would resubmit an unchanged input to an unchanged model, crash the same
+	// way, and pay again.
+	assert.equal(failureFromJob({ error: { code: 'PROVIDER_CRASHED' } }, 'job_x').retryable, false);
+});
+
+test('the fallback never overrides what the API said', () => {
+	// The API sends `retryable` on the job and is the authority on its own codes.
+	// The set here only fills in for a job that arrives without the flag, so a
+	// code Rendobar reclassifies takes effect without this node being republished.
+	assert.equal(
+		failureFromJob({ error: { code: 'DISPATCH_EXHAUSTED', retryable: false } }, 'job_x').retryable,
+		false,
+		'an explicit false must win over the retryable fallback',
+	);
+	assert.equal(
+		failureFromJob({ error: { code: 'PROVIDER_CRASHED', retryable: true } }, 'job_x').retryable,
+		true,
+		'an explicit true must win over the absence from the fallback',
+	);
+});
+
+test('a job that never ran is not told to go and read what the runner reported', () => {
+	// Advice that contradicts `retryable` beside it is the NOT_CONFIGURED bug in
+	// reverse: these codes mean no runner ever saw the job, so PROCESSING_FAILED's
+	// "open the job and adjust your parameters" is the wrong thing to say.
+	for (const code of [
+		'DISPATCH_EXHAUSTED',
+		'DISPATCH_UNAVAILABLE',
+		'DISPATCH_ERROR',
+		'PROVIDER_CLEARED',
+		'P1_EXECUTION_ERROR',
+	]) {
+		const details = failureFromJob({ error: { code } }, 'job_x');
+		assert.equal(details.retryable, true, code);
+		assert.notEqual(details.description, describeApiCode('PROCESSING_FAILED'), code);
+		assert.match(details.description, /Run the workflow again/, code);
+		assertCleanCopy(details.description, `guidance for ${code}`);
+	}
 });
 
 test('every code the API can send has guidance that fits it', () => {

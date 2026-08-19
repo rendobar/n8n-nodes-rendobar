@@ -9,6 +9,7 @@ const {
 	pageExhausted,
 	readLocator,
 	roomFor,
+	unseenRows,
 } = require('../dist/nodes/Rendobar/Rendobar.node.js');
 
 test('a page is trimmed to what Limit still has room for', () => {
@@ -48,6 +49,36 @@ test('a row that is not an object still counts toward the offset', () => {
 	assert.equal(pageExhausted(rows.length, 3, rows.length, undefined), false);
 	// Counting only the usable rows would have called it the end of the list.
 	assert.equal(pageExhausted(usable.length, 3, usable.length, undefined), true);
+});
+
+test('a job two offset pages both claim is returned once', () => {
+	// GET /jobs orders by creation time with nothing under it to break a tie, and
+	// jobs really are created inside the same millisecond, so two page queries can
+	// order those rows differently and put one of them in both pages.
+	const seen = new Set(['job_a', 'job_b']);
+	const secondPage = [{ id: 'job_b' }, { id: 'job_c' }, { id: 'job_d' }];
+
+	assert.deepEqual(unseenRows(secondPage, seen), [{ id: 'job_c' }, { id: 'job_d' }]);
+});
+
+test('a page with nothing seen before is passed through untouched', () => {
+	const page = [{ id: 'job_a' }, { id: 'job_b' }];
+	assert.deepEqual(unseenRows(page, new Set()), page);
+});
+
+test('the seen set is not written by the reader', () => {
+	// The caller adds the IDs it actually emits, so a row that 'Limit' trims off
+	// the end of a page is not marked as delivered when it was not.
+	const seen = new Set(['job_a']);
+	unseenRows([{ id: 'job_b' }, { id: 'job_c' }], seen);
+	assert.deepEqual([...seen], ['job_a']);
+});
+
+test('a row with no usable ID is kept rather than dropped', () => {
+	// It cannot be recognised on a later page either way, and dropping data
+	// because it could not be identified would be worse than repeating it.
+	const rows = [{ id: 'job_a' }, {}, { id: 42 }, { id: 'job_b' }];
+	assert.deepEqual(unseenRows(rows, new Set(['job_a'])), [{}, { id: 42 }, { id: 'job_b' }]);
 });
 
 test('the run index survives a context that has no getExecuteData', () => {

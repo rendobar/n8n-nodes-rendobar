@@ -8,7 +8,11 @@ const assert = require('node:assert/strict');
 const {
 	buildCallback,
 	readCallbackHeaders,
+	waitAndCallbackConflict,
 } = require('../dist/nodes/Rendobar/shared/callback.js');
+
+// The n8n guidelines keep these out of anything shown to a user.
+const BANNED_WORDS = /\b(error|errors|problem|problems|failure|failures|failed|mistake|mistakes)\b/i;
 
 const RESUME_URL = 'https://n8n.example.com/webhook-waiting/1042';
 
@@ -146,18 +150,77 @@ test('Create takes a callback address, on the Job resource only', () => {
 	assert.match(url.description, /Wait node/);
 });
 
-test('the callback hint says a job that stops still calls back', () => {
-	// Terminal events cannot be filtered out on Rendobar's side, which is the
-	// reason a parked execution can never be left waiting forever. The hint says
-	// so without any of the words n8n's guidelines keep out of node copy.
+test('the callback hint names the two Wait node settings the recipe needs', () => {
 	const { hint } = byName('callbackUrl');
-	assert.match(hint, /stopped/);
-	assert.match(hint, /cancelled/);
 	// The Wait node's resume webhook answers GET by default and Rendobar posts,
 	// and a method mismatch is answered with a 404 that names nothing. It is the
 	// one setting that decides whether any of this works.
 	assert.match(hint, /POST/);
-	assert.doesNotMatch(hint, /(error|problem|failure|failed|mistake)/i);
+	// And this is the one that decides what happens when the call never lands.
+	// Without it a Wait node on a resume URL has no ceiling at all, so an
+	// execution that misses the delivery window parks for good.
+	assert.match(hint, /Limit Wait Time/);
+	assert.doesNotMatch(hint, BANNED_WORDS);
+});
+
+test('no copy promises a delivery the retry window cannot keep', () => {
+	// Delivery is five retries over about five minutes and then nothing at all.
+	// Wording that reads as a guarantee is exactly what stops a user setting the
+	// Wait node's own limit, which is the only thing that releases a parked
+	// execution once the window has closed.
+	const callbackUrl = byName('callbackUrl');
+	const overclaim = /\bnever\b|\balways\b|\bguarantee/i;
+
+	for (const copy of [callbackUrl.description, callbackUrl.hint]) {
+		assert.doesNotMatch(copy, overclaim, `callback copy overclaims delivery: ${copy}`);
+	}
+});
+
+test('the two delivery routes are refused together, and each is fine alone', () => {
+	// Behaviour, not wording. This is the combination that parks an execution for
+	// good, and it is answered before the job is submitted.
+	assert.ok(waitAndCallbackConflict(true, true), 'both together must be refused');
+
+	assert.equal(waitAndCallbackConflict(true, false), undefined, 'a callback alone is fine');
+	assert.equal(waitAndCallbackConflict(false, true), undefined, 'polling alone is fine');
+	assert.equal(waitAndCallbackConflict(false, false), undefined, 'neither is fine');
+});
+
+test('the refusal names both parameters and says which one to drop', () => {
+	const clash = waitAndCallbackConflict(true, true);
+
+	// n8n renders `parameter` as the thing at fault, so it has to be the one the
+	// user is being told to turn off.
+	assert.equal(clash.parameter, 'Wait for Completion');
+	assert.match(clash.what, /Callback URL/);
+	assert.match(clash.how, /Wait for Completion/);
+	assert.match(clash.how, /Callback URL/);
+
+	for (const copy of [clash.what, clash.how]) {
+		assert.doesNotMatch(copy, BANNED_WORDS, `refusal copy uses a banned word: ${copy}`);
+	}
+});
+
+test('a workflow that already sets both still shows both parameters', () => {
+	// The combination is answered with a message, not by hiding half of it.
+	// A parameter that vanishes leaves someone who already built the workflow
+	// reading a panel that no longer matches what they saved, and a stored value
+	// behind a hidden field is read differently across n8n versions.
+	for (const name of ['waitForCompletion', 'callbackUrl']) {
+		const property = byName(name);
+		const gates = { ...property.displayOptions?.show, ...property.displayOptions?.hide };
+		assert.ok(
+			!('callbackUrl' in gates) && !('waitForCompletion' in gates),
+			`${name} is gated on the other half of the pair`,
+		);
+	}
+});
+
+test('both descriptions warn about the pairing before it is built', () => {
+	// The run-time refusal is the backstop. This copy is what stops the workflow
+	// being built that way in the first place.
+	assert.match(byName('waitForCompletion').description, /Callback URL/);
+	assert.match(byName('callbackUrl').description, /Wait for Completion/);
 });
 
 test('Callback Headers appear only once an address has been given', () => {

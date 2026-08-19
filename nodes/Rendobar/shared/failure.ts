@@ -36,16 +36,40 @@ export interface FailureDetails {
 // Rendobar SDK's own retry set so the two clients agree on what is transient.
 export const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
-// Job-level codes Rendobar treats as retryable. The API sends `retryable` on the
-// job itself, so this is only the fallback for a job that arrives without it.
-// `DISPATCH_EXHAUSTED` is what the dead-letter consumer actually writes onto a
-// job it could not dispatch; `DISPATCH_ERROR` is the code the API's own
-// retryable set names, so both are honoured here.
+// Job-level codes Rendobar treats as retryable, mirroring RETRYABLE_ERROR_CODES
+// in the API's own `lib/job-utils.ts`.
+//
+// This is ONLY the fallback for a job that arrives without a `retryable` flag.
+// The API sends one on the job itself and is the authority on its own codes, so
+// `failureFromJob` reads the flag first and comes here only when there is none —
+// a code added on the Rendobar side is then classified correctly by the flag
+// long before this list hears about it.
+//
+// Every code here describes a job that never ran, which is what makes a retry
+// free:
+//   DISPATCH_EXHAUSTED   - the dispatch queue burned all its retries
+//   DISPATCH_UNAVAILABLE - a transient dispatch fault hit the attempt ceiling
+//   PROVIDER_CLEARED     - the runner was decommissioned mid-flight
+//   P1_EXECUTION_ERROR   - an inline job died with the API worker
+//   RUNNER_TIMEOUT       - the stuck-job sweep or provider reconciliation
+//   RUNNER_ERROR         - no healthy runner had capacity
+//   DISPATCH_ERROR       - the retired name for the dispatch family. Nothing
+//                          writes it any more; kept so a job old enough to
+//                          carry it still classifies the same way.
+//
+// PROVIDER_CRASHED is deliberately absent and has to stay absent. A crashed run
+// DID run: the API sees `timing.started`, so it debits the balance for the
+// compute burned. Calling it retryable invites a workflow that routes on
+// `retryable` to resubmit an unchanged input to an unchanged model, crash the
+// same way, and pay again.
 const RETRYABLE_JOB_CODES = new Set([
-	'DISPATCH_ERROR',
 	'DISPATCH_EXHAUSTED',
+	'DISPATCH_UNAVAILABLE',
+	'PROVIDER_CLEARED',
+	'P1_EXECUTION_ERROR',
 	'RUNNER_TIMEOUT',
 	'RUNNER_ERROR',
+	'DISPATCH_ERROR',
 ]);
 
 // Codes whose HTTP status suggests a retry but whose cause cannot clear on one.
@@ -59,6 +83,17 @@ const GENERIC_DESCRIPTION =
 
 const TRANSIENT_DESCRIPTION =
 	'This is usually temporary and the node already retried. Run the workflow again in a moment. If it keeps happening, contact Rendobar support with the job ID.';
+
+// For the codes in RETRYABLE_JOB_CODES that describe a job which never reached a
+// runner. Without a line of their own they fall through to PROCESSING_FAILED,
+// whose advice is to go and read what the runner reported — of a job no runner
+// ever saw, while `retryable` beside it says to run the step again.
+//
+// It says nothing about the bill. Whether a job settles free is decided by the
+// API from `startedAt`, not from the code, so "this cost you nothing" is not a
+// promise this node is in a position to make.
+const NEVER_RAN_DESCRIPTION =
+	'Rendobar could not get this job onto a runner, so there is nothing in this node to change. Run the workflow again in a moment; a new execution submits it afresh rather than handing back this one.';
 
 // "How to solve it", keyed by the code Rendobar returns. Only codes a workflow
 // builder can act on are listed; anything else falls back to the generic line.
@@ -103,6 +138,11 @@ const DESCRIPTIONS: Record<string, string> = {
 		'Rendobar could not read the request. Check the values in this node, then run the workflow again.',
 	PROCESSING_FAILED:
 		"Open the job in the Rendobar dashboard to see what the runner reported, adjust 'Inputs (JSON)' or 'Parameters', then run the workflow again.",
+	DISPATCH_EXHAUSTED: NEVER_RAN_DESCRIPTION,
+	DISPATCH_UNAVAILABLE: NEVER_RAN_DESCRIPTION,
+	DISPATCH_ERROR: NEVER_RAN_DESCRIPTION,
+	PROVIDER_CLEARED: NEVER_RAN_DESCRIPTION,
+	P1_EXECUTION_ERROR: NEVER_RAN_DESCRIPTION,
 	RUNNER_ERROR: TRANSIENT_DESCRIPTION,
 	RUNNER_TIMEOUT:
 		"The job ran past its time budget. Raise the timeout in 'Parameters' if the job type offers one, or split the work into smaller jobs.",

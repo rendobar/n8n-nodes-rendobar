@@ -10,6 +10,11 @@ import { readString, readValue } from './json';
  * at a Wait node's resume URL and n8n persists the execution rather than holding
  * it open, so no worker is pinned and no poll loop has to outlive the job.
  *
+ * Delivery is best effort rather than a guarantee. A call not answered with a
+ * 2xx is retried five times over roughly the next five minutes and then given
+ * up on, so a Wait node parked on a resume URL still needs its own 'Limit Wait
+ * Time' to have a way out. The README says so beside the recipe.
+ *
  * The result is a discriminated union rather than a throw, so the caller raises
  * the error naming the parameter at fault, the way every other reader here
  * works.
@@ -109,4 +114,37 @@ export function buildCallback(rawUrl: unknown, rawHeaders: unknown): CallbackRes
 	const callback: JsonObject = { url };
 	if (Object.keys(headers).length > 0) callback.headers = headers;
 	return { ok: true, callback };
+}
+
+/**
+ * Whether 'Wait for Completion' and 'Callback URL' were both asked for, which
+ * is a combination that cannot work and is checked before the job is submitted.
+ *
+ * The two are alternatives, and using them together loses the callback for
+ * certain — this is a sequence, not a race. Rendobar calls the address the
+ * moment the job ends. At that moment this node is still inside its poll loop,
+ * so the execution's status is `running` and n8n's waiting-webhook endpoint
+ * answers 409 rather than resuming; Rendobar's five retries then run out over
+ * the following few minutes. By the time the poll returns and the execution
+ * reaches the Wait node there is nothing left to deliver, and a Wait node with
+ * no 'Limit Wait Time' set has no ceiling — the execution parks for good.
+ *
+ * Refusing beats hiding one parameter behind the other: someone who has already
+ * built the workflow reads what they set, told plainly which half to drop.
+ * Refusing also beats quietly ignoring one of them, which would hand the next
+ * node an unfinished job (or park the Wait node anyway) with nothing said. The
+ * check runs before `POST /jobs`, so nothing is submitted or billed for a
+ * submission that cannot be collected.
+ */
+export function waitAndCallbackConflict(
+	hasCallback: boolean,
+	waitForCompletion: boolean,
+): { parameter: string; what: string; how: string } | undefined {
+	if (!hasCallback || !waitForCompletion) return undefined;
+
+	return {
+		parameter: 'Wait for Completion',
+		what: "cannot be used together with 'Callback URL'",
+		how: "Rendobar calls the address in 'Callback URL' the moment the job ends, and at that moment this node is still polling, so n8n answers the call with a conflict and the delivery attempts run out before the execution reaches the Wait node. Turn off 'Wait for Completion' to let the Wait node park the execution, or clear 'Callback URL' to keep polling here.",
+	};
 }

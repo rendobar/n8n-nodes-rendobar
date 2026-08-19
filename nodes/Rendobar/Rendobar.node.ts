@@ -41,7 +41,7 @@ import {
 	type JsonObject,
 	type JsonValue,
 } from './shared/json';
-import { buildCallback } from './shared/callback';
+import { buildCallback, waitAndCallbackConflict } from './shared/callback';
 import { getJobTypes } from './listSearch/getJobTypes';
 import { getJobs } from './listSearch/getJobs';
 import { getJobFields } from './methods/getJobFields';
@@ -187,6 +187,34 @@ export function pageExhausted(
 	total?: number,
 ): boolean {
 	return rowCount < pageSize || (total !== undefined && offset >= total);
+}
+
+/**
+ * The rows of a page that have not been handed to the workflow already.
+ *
+ * `GET /jobs` pages by offset over an ordering that has no tiebreaker under it —
+ * creation time alone — and jobs really are created inside the same
+ * millisecond, so two page queries are free to order those rows differently and
+ * put one of them in both pages. A job created while a Return All is still
+ * walking the pages does the same thing from the other end, by pushing every row
+ * behind it one slot along. Neither is something this node can correct from
+ * here: it can only see a job it has already emitted, and refuse to emit it
+ * twice. A row that moved the other way, out of the window between two requests,
+ * is not recoverable at all — which is why the README does not call Return All a
+ * snapshot, and points at 'Created Before' for a run that has to be exact.
+ *
+ * `seen` is not written here. The caller adds the IDs it actually emits, so a
+ * row trimmed off by 'Limit' is not marked as delivered when it was not.
+ *
+ * A row whose `id` is not a string is kept: it cannot be recognised on a later
+ * page either way, and dropping data because it could not be identified would be
+ * worse than repeating it.
+ */
+export function unseenRows(rows: JsonObject[], seen: Set<string>): JsonObject[] {
+	return rows.filter((row) => {
+		const id = stringAt(row, 'id');
+		return id === undefined || !seen.has(id);
+	});
 }
 
 /**
@@ -583,7 +611,7 @@ export class Rendobar implements INodeType {
 				default: false,
 				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
 				description:
-					"Whether to hold the execution open until the job finishes and return its result. Suits jobs of a few minutes. For anything longer use 'Callback URL' with a Wait node, which parks the execution instead of holding a worker.",
+					"Whether to hold the execution open until the job finishes and return its result. Suits jobs of a few minutes. For anything longer use 'Callback URL' with a Wait node, which parks the execution instead of holding a worker. The two are alternatives: leave this off whenever 'Callback URL' is set, because a call that arrives while this node is polling cannot be answered.",
 			},
 			{
 				displayName: 'Poll Interval (Seconds)',
@@ -616,8 +644,8 @@ export class Rendobar implements INodeType {
 				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
 				placeholder: 'e.g. {{ $execution.resumeUrl }}',
 				description:
-					"Where Rendobar sends the finished job. Put a Wait node set to 'On Webhook Call' after this one and use its resume URL here. n8n then parks the execution instead of holding it open, so a job running for hours occupies no worker and needs no polling. Leave empty to send nothing.",
-				hint: "Set the Wait node's HTTP Method to POST, which is not its default. Rendobar posts the job on every ending, including one that stopped or was cancelled, so a parked execution is never left waiting.",
+					"Where Rendobar sends the finished job. Put a Wait node set to 'On Webhook Call' after this one and use its resume URL here. n8n then parks the execution instead of holding it open, so a job running for hours occupies no worker and needs no polling. Turn 'Wait for Completion' off when you use this. Leave empty to send nothing.",
+				hint: "Set the Wait node's HTTP Method to POST, which is not its default, and switch on its 'Limit Wait Time'. Rendobar posts the job on every ending, including one that stopped or was cancelled, but a call it cannot deliver is retried only five times over about five minutes — after that the parked execution has only that limit to release it.",
 			},
 			{
 				displayName: 'Callback Headers',
@@ -736,6 +764,7 @@ export class Rendobar implements INodeType {
 				default: false,
 				displayOptions: { show: { resource: ['job'], operation: ['getAll'] } },
 				description: 'Whether to return all results or only up to a given limit',
+				hint: "Pages are read one after another, so a job created while this runs can shift the later ones. Duplicates are removed, but a job can still slip past the window. Set 'Created Before' under Filters when the list has to be exact.",
 			},
 			{
 				displayName: 'Limit',
@@ -1007,6 +1036,9 @@ export class Rendobar implements INodeType {
 
 					let offset = 0;
 					let taken = 0;
+					// Every job ID already pushed, so a row that two offset pages both
+					// claim is returned once. Bounded by what `returnData` already holds.
+					const seen = new Set<string>();
 					for (;;) {
 						const pageSize = Math.min(
 							MAX_PAGE_SIZE,
@@ -1027,10 +1059,12 @@ export class Rendobar implements INodeType {
 						// still occupies an offset slot, so counting only the usable ones
 						// would re-request it on the next page and read it twice.
 						const rows = arrayAt(page, 'data') ?? [];
-						const jobs = rows.filter(isJsonObject);
+						const jobs = unseenRows(rows.filter(isJsonObject), seen);
 
 						const room = roomFor(limit, taken, jobs.length);
 						for (const job of jobs.slice(0, room)) {
+							const id = stringAt(job, 'id');
+							if (id !== undefined) seen.add(id);
 							returnData.push(buildJobItem(job, i, outputMode, outputFields));
 						}
 						taken += room;
@@ -1070,6 +1104,15 @@ export class Rendobar implements INodeType {
 					);
 					if (!callback.ok) {
 						throw invalidParameter(node, callback.parameter, callback.what, callback.how, i);
+					}
+
+					const waitForCompletion = this.getNodeParameter('waitForCompletion', i, false) === true;
+
+					// Before the submission, not after: a job submitted under a pairing
+					// whose result can never be collected is a job billed for nothing.
+					const clash = waitAndCallbackConflict(callback.callback !== undefined, waitForCompletion);
+					if (clash !== undefined) {
+						throw invalidParameter(node, clash.parameter, clash.what, clash.how, i);
 					}
 
 					const submission: JsonObject = {
@@ -1119,7 +1162,7 @@ export class Rendobar implements INodeType {
 
 					job = unwrapData(created) ?? {};
 
-					if (this.getNodeParameter('waitForCompletion', i, false) === true) {
+					if (waitForCompletion) {
 						const status = stringAt(job, 'status');
 						const jobId = stringAt(job, 'id');
 						if (jobId === undefined) {
