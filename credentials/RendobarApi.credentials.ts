@@ -23,14 +23,18 @@ export class RendobarApi implements ICredentialType {
 			typeOptions: { password: true },
 			default: '',
 			required: true,
-			description: 'Your Rendobar API key (starts with rb_). Create one in the dashboard.',
+			placeholder: 'e.g. rb_live_abc123',
+			description:
+				'The API key to authenticate with. Keys start with rb_ and are created in the Rendobar dashboard.',
 		},
 		{
 			displayName: 'Base URL',
 			name: 'baseUrl',
 			type: 'string',
 			default: 'https://api.rendobar.com',
-			description: 'Override only to target a non-production environment.',
+			placeholder: 'e.g. https://api.rendobar.com',
+			description:
+				'The API address to call. Change it only to reach a non-production Rendobar environment.',
 		},
 	];
 

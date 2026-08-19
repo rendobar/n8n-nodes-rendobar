@@ -1,27 +1,17 @@
 import type {
+	FieldType,
 	ILoadOptionsFunctions,
+	INodePropertyOptions,
 	ResourceMapperField,
 	ResourceMapperFields,
-	FieldType,
 } from 'n8n-workflow';
 import { rendobarApiRequest } from '../shared/transport';
+import { booleanAt, objectAt, objectsAt, stringAt } from '../shared/json';
 
-type ConnectorField = {
-	name: string;
-	label: string;
-	type: 'string' | 'number' | 'boolean' | 'options' | 'json';
-	required: boolean;
-	default?: unknown;
-	options?: Array<{ label: string; value: string }>;
-};
-
-type SchemaResponse = {
-	data: { type: string; fields: ConnectorField[] };
-};
-
-// Our connector field types map onto n8n's resource-mapper field types. Nested
-// params (type "json") become an object field; the user edits raw JSON.
-const TYPE_MAP: Record<ConnectorField['type'], FieldType> = {
+// Rendobar's connector field types map onto n8n's resource-mapper field types.
+// A nested parameter (Rendobar type "json") becomes an object field, which n8n
+// renders as a raw JSON editor.
+const TYPE_MAP: Record<string, FieldType> = {
 	string: 'string',
 	number: 'number',
 	boolean: 'boolean',
@@ -29,36 +19,69 @@ const TYPE_MAP: Record<ConnectorField['type'], FieldType> = {
 	json: 'object',
 };
 
-function isPrimitive(v: unknown): v is string | number | boolean {
-	return typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean';
+function defaultValueOf(value: unknown): string | number | boolean | null {
+	return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+		? value
+		: null;
 }
 
-// Loads the parameter fields for the selected job type from
-// GET /jobs/types/:type/schema. n8n calls this whenever the Job Type changes,
-// so the form always matches the live schema with no node release.
+/**
+ * Loads the parameter fields for the chosen job type from
+ * `GET /jobs/types/:type/schema`. n8n calls this whenever Job Type changes, so
+ * the form always matches the live schema with no release of this node.
+ */
 export async function getJobFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
-	const jobType = this.getNodeParameter('jobType', undefined, {
-		extractValue: true,
-	}) as string;
+	// `extractValue` resolves the Resource Locator down to the job type name,
+	// but the declared return type still spans every parameter shape.
+	const selected = this.getNodeParameter('jobType', undefined, { extractValue: true });
+	const jobType = typeof selected === 'string' ? selected.trim() : '';
 
-	if (!jobType) return { fields: [] };
+	if (jobType === '') {
+		return {
+			fields: [],
+			emptyFieldsNotice: "Choose a job type above and its parameters load here.",
+		};
+	}
 
-	const response = (await rendobarApiRequest.call(
-		this,
-		'GET',
-		`/jobs/types/${encodeURIComponent(jobType)}/schema`,
-	)) as SchemaResponse;
+	const response = await rendobarApiRequest.call(this, {
+		method: 'GET',
+		path: `/jobs/types/${encodeURIComponent(jobType)}/schema`,
+		idempotent: true,
+	});
 
-	const fields: ResourceMapperField[] = (response.data?.fields ?? []).map((f) => ({
-		id: f.name,
-		displayName: f.label,
-		required: f.required,
-		display: true,
-		defaultMatch: false,
-		type: TYPE_MAP[f.type] ?? 'string',
-		options: f.options?.map((o) => ({ name: o.label, value: o.value })),
-		defaultValue: isPrimitive(f.default) ? f.default : null,
-	}));
+	const fields: ResourceMapperField[] = objectsAt(objectAt(response, 'data'), 'fields').flatMap(
+		(field) => {
+			const name = stringAt(field, 'name');
+			if (name === undefined) return [];
 
-	return { fields };
+			const type = stringAt(field, 'type') ?? 'string';
+			const options: INodePropertyOptions[] = objectsAt(field, 'options').flatMap((option) => {
+				const value = stringAt(option, 'value');
+				if (value === undefined) return [];
+				return [{ name: stringAt(option, 'label') ?? value, value }];
+			});
+
+			return [
+				{
+					id: name,
+					displayName: stringAt(field, 'label') ?? name,
+					required: booleanAt(field, 'required') ?? false,
+					display: true,
+					defaultMatch: false,
+					type: TYPE_MAP[type] ?? 'string',
+					...(options.length > 0 ? { options } : {}),
+					defaultValue: defaultValueOf(field.default),
+				},
+			];
+		},
+	);
+
+	return {
+		fields,
+		...(fields.length === 0
+			? {
+					emptyFieldsNotice: `The '${jobType}' job type takes no parameters. Give it its files in 'Inputs (JSON)'.`,
+				}
+			: {}),
+	};
 }

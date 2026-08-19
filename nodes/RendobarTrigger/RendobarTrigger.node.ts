@@ -1,13 +1,14 @@
 import {
 	NodeConnectionTypes,
+	NodeOperationError,
 	type IHookFunctions,
-	type IWebhookFunctions,
-	type IDataObject,
 	type INodeType,
 	type INodeTypeDescription,
+	type IWebhookFunctions,
 	type IWebhookResponseData,
 } from 'n8n-workflow';
-import { rendobarApiRequest } from '../Rendobar/shared/transport';
+import { rendobarApiRequest, rendobarRequest } from '../Rendobar/shared/transport';
+import { booleanAt, stringAt, stringsAt, unwrapData } from '../Rendobar/shared/json';
 
 // POST /webhooks/endpoints validates `name` at 1-50 characters.
 const MAX_ENDPOINT_NAME_LENGTH = 50;
@@ -20,6 +21,25 @@ export function buildEndpointName(workflowName?: string, nodeName?: string): str
 	);
 	const label = parts.length > 0 ? `n8n: ${parts.join(' / ')}` : 'n8n';
 	return label.slice(0, MAX_ENDPOINT_NAME_LENGTH);
+}
+
+/** True when the registration already matches what this node wants delivered. */
+export function registrationMatches(
+	registered: { url?: string; events: string[]; active: boolean },
+	wanted: { url: string; events: string[] },
+): boolean {
+	if (!registered.active) return false;
+	if (registered.url !== wanted.url) return false;
+	if (registered.events.length !== wanted.events.length) return false;
+	const have = new Set(registered.events);
+	return wanted.events.every((event) => have.has(event));
+}
+
+function selectedEvents(context: IHookFunctions): string[] {
+	const events = context.getNodeParameter('events');
+	return Array.isArray(events)
+		? events.filter((event): event is string => typeof event === 'string')
+		: [];
 }
 
 // Starts a workflow when a Rendobar event fires (job completed/failed, etc.).
@@ -80,27 +100,107 @@ export class RendobarTrigger implements INodeType {
 
 	webhookMethods = {
 		default: {
+			// n8n skips `create` when this reports true, so trusting the stored id
+			// alone leaves the trigger silently dead whenever the registration has
+			// gone away on Rendobar's side — after a failed `delete`, or if someone
+			// removed it in the dashboard. The registration is checked for real, and
+			// a drifted URL or event list is corrected in place rather than by
+			// registering a second endpoint.
 			async checkExists(this: IHookFunctions): Promise<boolean> {
 				const data = this.getWorkflowStaticData('node');
-				return Boolean(data.endpointId);
+				const endpointId = typeof data.endpointId === 'string' ? data.endpointId : undefined;
+				if (endpointId === undefined) return false;
+
+				const path = `/webhooks/endpoints/${encodeURIComponent(endpointId)}`;
+				const response = await rendobarRequest.call(this, {
+					method: 'GET',
+					path,
+					idempotent: true,
+				});
+
+				// Gone from Rendobar: forget it so n8n registers a fresh one.
+				if (response.statusCode === 404 || response.statusCode === 410) {
+					delete data.endpointId;
+					return false;
+				}
+
+				if (response.statusCode < 200 || response.statusCode >= 300) {
+					throw new NodeOperationError(
+						this.getNode(),
+						'Rendobar would not confirm this workflow is still subscribed',
+						{
+							description:
+								'Check the Rendobar credential and that this n8n instance can reach the API, then activate the workflow again.',
+						},
+					);
+				}
+
+				const endpoint = unwrapData(response.body);
+				const wantedUrl = this.getNodeWebhookUrl('default');
+				const wantedEvents = selectedEvents(this);
+
+				const registeredUrl = stringAt(endpoint, 'url');
+				const registered = {
+					...(registeredUrl === undefined ? {} : { url: registeredUrl }),
+					events: stringsAt(endpoint, 'subscribedEvents'),
+					// An endpoint Rendobar disabled after repeated non-delivery comes
+					// back with active: false, which has to count as drift.
+					active: booleanAt(endpoint, 'active') ?? true,
+				};
+
+				if (
+					wantedUrl !== undefined &&
+					!registrationMatches(registered, { url: wantedUrl, events: wantedEvents })
+				) {
+					await rendobarApiRequest.call(this, {
+						method: 'PATCH',
+						path,
+						body: { url: wantedUrl, subscribedEvents: wantedEvents, active: true },
+						// Writing the same desired state twice lands on the same result.
+						idempotent: true,
+					});
+				}
+
+				return true;
 			},
 
 			async create(this: IHookFunctions): Promise<boolean> {
 				const webhookUrl = this.getNodeWebhookUrl('default');
-				const events = this.getNodeParameter('events') as string[];
+				if (webhookUrl === undefined) {
+					throw new NodeOperationError(this.getNode(), 'This node has no webhook address yet', {
+						description:
+							'Save the workflow, then activate it so n8n can hand Rendobar an address to deliver to.',
+					});
+				}
 
 				// The API's create-endpoint schema is { name, url, subscribedEvents }.
 				// `name` is required (1-50 chars) and the event array is
 				// `subscribedEvents`, not `events` — anything else is stripped by the
 				// validator and the request 400s.
-				const response = (await rendobarApiRequest.call(this, 'POST', '/webhooks/endpoints', {
-					name: buildEndpointName(this.getWorkflow().name, this.getNode().name),
-					url: webhookUrl,
-					subscribedEvents: events,
-				})) as { data: { id: string } };
+				const response = await rendobarApiRequest.call(this, {
+					method: 'POST',
+					path: '/webhooks/endpoints',
+					body: {
+						name: buildEndpointName(this.getWorkflow().name, this.getNode().name),
+						url: webhookUrl,
+						subscribedEvents: selectedEvents(this),
+					},
+				});
+
+				const endpointId = stringAt(unwrapData(response), 'id');
+				if (endpointId === undefined) {
+					throw new NodeOperationError(
+						this.getNode(),
+						'Rendobar accepted the subscription but did not name it',
+						{
+							description:
+								'Activate the workflow again. If it keeps happening, remove any stale n8n endpoints in the Rendobar dashboard first.',
+						},
+					);
+				}
 
 				const data = this.getWorkflowStaticData('node');
-				data.endpointId = response.data.id;
+				data.endpointId = endpointId;
 				// The response also carries a plaintext `signingSecret`. It is
 				// deliberately NOT persisted: n8n's workflow static data is stored
 				// unencrypted and travels in workflow exports, and nothing here reads
@@ -114,22 +214,30 @@ export class RendobarTrigger implements INodeType {
 
 			async delete(this: IHookFunctions): Promise<boolean> {
 				const data = this.getWorkflowStaticData('node');
-				if (!data.endpointId) return true;
-				try {
-					await rendobarApiRequest.call(
-						this,
-						'DELETE',
-						`/webhooks/endpoints/${data.endpointId as string}`,
-					);
-				} catch (error) {
-					const reason = error instanceof Error ? error.message : String(error);
+				const endpointId = typeof data.endpointId === 'string' ? data.endpointId : undefined;
+				if (endpointId === undefined) return true;
+
+				const response = await rendobarRequest.call(this, {
+					method: 'DELETE',
+					path: `/webhooks/endpoints/${encodeURIComponent(endpointId)}`,
+					idempotent: true,
+				});
+
+				// Already gone counts as removed.
+				const removed =
+					(response.statusCode >= 200 && response.statusCode < 300) ||
+					response.statusCode === 404 ||
+					response.statusCode === 410;
+
+				if (!removed) {
 					this.logger.error(
-						`Rendobar: could not remove webhook endpoint ${data.endpointId as string}. ${reason}`,
+						`Rendobar: the webhook endpoint ${endpointId} is still registered (status ${response.statusCode}).`,
 					);
-					// Reporting false keeps the endpoint ID in static data so n8n can retry
-					// the removal, rather than orphaning a live registration on Rendobar.
+					// Keeping the ID in static data lets n8n retry the removal rather
+					// than orphaning a live registration on Rendobar.
 					return false;
 				}
+
 				delete data.endpointId;
 				// Clears the secret stored by node versions before 0.3.0.
 				delete data.signingSecret;
@@ -139,9 +247,10 @@ export class RendobarTrigger implements INodeType {
 	};
 
 	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
-		const body = this.getBodyData();
+		// The delivered envelope is passed through whole: { version, event,
+		// deliveryId, timestamp, orgId, data }, where `data` carries the job.
 		return {
-			workflowData: [this.helpers.returnJsonArray([body as IDataObject])],
+			workflowData: [this.helpers.returnJsonArray([this.getBodyData()])],
 		};
 	}
 }

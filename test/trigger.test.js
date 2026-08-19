@@ -60,3 +60,63 @@ test('the default event selection is a subset of the offered events', () => {
 		assert.ok(offered.includes(value), `${value} defaulted but not offered`);
 	}
 });
+
+const { registrationMatches } = require('../dist/nodes/RendobarTrigger/RendobarTrigger.node.js');
+
+const wanted = {
+	url: 'https://n8n.example.com/webhook/abc',
+	events: ['job.completed', 'job.failed'],
+};
+
+test('a registration that already matches is left alone', () => {
+	assert.equal(
+		registrationMatches(
+			{ url: wanted.url, events: ['job.failed', 'job.completed'], active: true },
+			wanted,
+		),
+		true,
+		'event order must not matter',
+	);
+});
+
+test('a drifted registration is reported so it can be corrected', () => {
+	// Changing the selected events, or moving the n8n instance, leaves Rendobar
+	// delivering the wrong thing to the wrong place until this notices.
+	assert.equal(
+		registrationMatches({ url: wanted.url, events: ['job.completed'], active: true }, wanted),
+		false,
+		'a shorter event list is drift',
+	);
+	assert.equal(
+		registrationMatches(
+			{ url: wanted.url, events: ['job.completed', 'job.started'], active: true },
+			wanted,
+		),
+		false,
+		'a different event is drift',
+	);
+	assert.equal(
+		registrationMatches(
+			{ url: 'https://old.example.com/webhook/abc', events: wanted.events, active: true },
+			wanted,
+		),
+		false,
+		'a moved webhook address is drift',
+	);
+	assert.equal(
+		registrationMatches({ url: wanted.url, events: wanted.events, active: false }, wanted),
+		false,
+		'an endpoint Rendobar disabled is drift',
+	);
+	assert.equal(
+		registrationMatches({ events: wanted.events, active: true }, wanted),
+		false,
+		'an endpoint with no address is drift',
+	);
+});
+
+test('the trigger deliberately does not advertise itself as an AI tool', () => {
+	// A trigger cannot be invoked by an agent, and n8n's type only allows `true`,
+	// so the only way to say no is to leave the flag off.
+	assert.equal(new RendobarTrigger().description.usableAsTool, undefined);
+});

@@ -10,6 +10,7 @@ n8n community node for [Rendobar](https://rendobar.com), a media processing API.
 - [Credentials](#credentials)
 - [Nodes](#nodes)
 - [Job result](#job-result-the-same-shape-for-every-job-type)
+- [When something goes wrong](#when-something-goes-wrong)
 - [Example workflows](#example-workflows)
 - [Compatibility](#compatibility)
 - [Troubleshooting](#troubleshooting)
@@ -23,8 +24,8 @@ In n8n, go to **Settings > Community Nodes** and install `@rendobar/n8n-nodes-re
 
 You need a Rendobar API key (starts with `rb_`). Create one in the [dashboard](https://app.rendobar.com). The connection is validated against your account when you save it.
 
-- **API Key**: your `rb_` key.
-- **Base URL**: defaults to `https://api.rendobar.com`. Change it only to target another environment.
+- **API Key**: your `rb_` key. Stored as a password field and never written to the workflow.
+- **Base URL**: defaults to `https://api.rendobar.com`. Change it only to reach a non-production Rendobar environment.
 
 ## Nodes
 
@@ -37,23 +38,28 @@ Operations are grouped by resource.
 - **Create**: submit a job.
   - The **Job Type** dropdown is loaded live from your account, and the parameter fields are discovered from the API, so new job types appear without updating this node.
   - Each submission sends an idempotency key derived from the execution, node, run and item, so a retried step reuses the same job instead of creating (and charging for) a second one.
-  - Optional **Wait for Completion**: poll until the job is done and return its result. It blocks the workflow, so it's best for short jobs. For long jobs use the trigger below. Configure the poll interval and a max-wait timeout.
-- **Get**: fetch a job by ID, including its status and result.
-  - Optional **Download Output File**: fetch the headline result file (`file.url`) into a binary property so the next node can use it directly. Applies only to completed jobs that produced a file.
-- **Get Many**: list jobs, newest first. Set **Return All** to page through every match, or leave it off and set a **Limit**. **Filters** narrows by status, job type, or originating client.
-- **Cancel**: cancel a job that is still running.
+  - Optional **Wait for Completion**: poll until the job is done and return its result. It holds the execution open, so it's best for short jobs. For long jobs use the trigger below. Configure **Poll Interval (Seconds)** and **Max Wait (Seconds)**.
+- **Get**: retrieve a job with its status and result.
+  - **Job** is a resource locator: pick from your recent jobs, paste an ID, or paste a dashboard link (`https://app.rendobar.com/jobs/...`) and the node extracts the ID. All three modes accept expressions.
+  - Optional **Download Output File**: fetch the headline result file (`file.url`) onto the item so the next node can use it directly. The download is streamed to n8n's binary store rather than buffered, so a multi-gigabyte result does not have to fit in memory. Applies only to finished jobs that produced a file.
+- **Get Many**: retrieve a list of jobs, newest first. Set **Return All** to page through every match, or leave it off and set a **Limit**. **Filters** narrows by status, job type, originating client and creation date. **Sort** orders by creation time, duration or cost, ascending or descending.
+- **Cancel**: stop a job that has not finished yet.
+  - Cancel returns the job itself with `status: "cancelled"`, not `{ deleted: true }`. Cancelling is not a delete: the job stays fetchable, keeps its cost and timings, and is removed only when its retention window passes.
 
 #### Resource: File
 
-- **Upload**: stream a binary file from a previous node to Rendobar and get back a URL to use as a job input. Files are ephemeral and auto-delete after 24 hours. Pair it with Job > Create: upload, then reference the returned `url` in the next node's inputs.
+- **Upload**: send a file from a previous node to Rendobar and get back a URL to use as a job input. Files are ephemeral and auto-delete after 24 hours. Pair it with Job > Create: upload, then reference the returned `url` in the next node's inputs.
+  - The file is read a chunk at a time and sent straight to storage, so peak memory stays at one upload part (100 MB) no matter how large the file is. On an n8n running in filesystem or S3 binary mode the file is never loaded into the process at all.
 
 #### Output
 
-Job operations take an **Output** parameter, because a raw job carries around 32 top-level fields.
+Both resources take an **Output** parameter, because a raw job carries around 33 top-level fields and a raw uploaded file carries 21.
 
-- **Simplified** (default): ten fields, `id`, `type`, `status`, `cost`, `data`, `file`, `files`, `expiresAt`, `createdAt`, `completedAt`. This is what most workflows and every AI agent should use.
+- **Simplified** (default): the fields workflows branch on. This is what most workflows and every AI agent should use.
+  - Job: `id`, `type`, `status`, `cost`, `createdAt`, `completedAt`, plus either the result (`data`, `file`, `files`, `expiresAt`) or, for a job that stopped, `error`. Never more than ten fields on one item.
+  - File: `id`, `url`, `filename`, `contentType`, `mediaType`, `sizeBytes`, `status`, `expiresAt`, `createdAt`.
 - **Raw**: every field the API returns.
-- **Selected Fields**: only the fields you pick. The job ID is always included.
+- **Selected Fields**: only the fields you pick. The ID is always included, whether or not you picked it, so an agent can come back for the rest of the record later.
 
 ### Job result (the same shape for every job type)
 
@@ -71,6 +77,37 @@ Set **Output** to **Raw** when you also need `output`, `steps`, `region`, timing
 Starts a workflow when a Rendobar event fires. Select the events to listen for (job completed, failed, cancelled, created, started, and balance events). On activation the node registers its webhook URL with Rendobar and removes it on deactivation.
 
 > Rendobar must be able to reach the webhook URL over HTTPS. This works on n8n Cloud or a tunnelled / publicly hosted instance. A plain `localhost` n8n is not reachable from the API, so use `n8n start --tunnel` to test locally.
+
+## When something goes wrong
+
+Every operation reports a stop the same way, so one error path handles the whole node.
+
+Turn on **Settings > Continue On Fail** (or connect the node's error output) and the item you get carries structured fields instead of one opaque string:
+
+| Field | Meaning |
+| --- | --- |
+| `error` | The message n8n would have shown. |
+| `code` | Machine-readable code, for example `INSUFFICIENT_CREDITS`, `RUNNER_TIMEOUT`, `PROCESSING_FAILED`. |
+| `retryable` | `true` when running the same step again may succeed. |
+| `failedPhase` | `preparing`, `processing` or `finalizing`, when a job reported one. |
+| `httpStatus` | The HTTP status, when the call reached Rendobar. |
+| `jobId` | The job concerned, when there is one. |
+| `description` | How to get unstuck. |
+
+That makes an If or a Switch node enough to split retryable stalls from configuration you have to fix:
+
+```
+{{ $json.retryable }}            → route to a Wait node and try again
+{{ $json.code === 'INSUFFICIENT_CREDITS' }} → route to an alert
+```
+
+A job that Rendobar finished in the `failed` state carries the same information in `error` on the item itself, so **Get** can inspect a stopped job without the workflow stopping.
+
+### Timeouts and retries
+
+- Every request has a 30-second timeout; file transfers get ten minutes.
+- Throttled requests (HTTP 429) are always retried, because a throttled request never ran. Stalled ones (500, 502, 503, 504) and dropped connections are retried only where repeating cannot duplicate anything — every read, and the writes that carry an idempotency key or settle to the same state twice. Creating a job is retried, because its idempotency key means a second attempt lands on the first job rather than a new one; registering a webhook endpoint is not.
+- Up to two retries, with exponential backoff plus jitter, honouring `Retry-After` in either form HTTP allows.
 
 ## Example workflows
 
@@ -152,7 +189,11 @@ No polling and no blocked execution. Use this shape for long jobs: submit in one
 			"parameters": {
 				"resource": "job",
 				"operation": "get",
-				"jobId": "={{ $json.data.jobId }}",
+				"jobId": {
+					"__rl": true,
+					"mode": "id",
+					"value": "={{ $json.data.jobId }}"
+				},
 				"downloadOutput": true,
 				"outputBinaryProperty": "data",
 				"output": "simplified"
@@ -192,8 +233,10 @@ Tested against n8n's current community-node API (`n8nNodesApiVersion: 1`).
 
 - **The trigger will not activate.** Rendobar has to reach your n8n webhook URL over public HTTPS. On a local instance, start n8n with `--tunnel`.
 - **Create Job returns a job you did not just submit.** Idempotency keys are unique per execution, node, run and item. If you are replaying the exact same execution, that is the intended behaviour: the API returns the original job rather than charging you twice.
-- **Wait for Completion times out.** The error tells you the job is still running. Raise **Max Wait**, or switch to the Rendobar Trigger, which does not block.
+- **Wait for Completion runs out of time.** The item reports that the job is still running. Raise **Max Wait (Seconds)**, or switch to the Rendobar Trigger, which does not hold the execution open.
 - **A field you need is missing from the item.** Set **Output** to **Raw**, or to **Selected Fields** and pick it.
+- **A job stopped and you want to know why.** With the default **Simplified** output, a stopped job carries `error.code`, `error.message`, `error.detail`, `error.retryable` and `error.failedPhase`.
+- **The Job list is empty.** It shows your recent jobs from `GET /jobs`. A brand new account has none yet — switch the locator to **By ID** or **By URL**.
 
 ## Resources
 

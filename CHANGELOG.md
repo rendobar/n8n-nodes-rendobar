@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Uploading a large file could exhaust memory, and files over ~2 GB could not be uploaded at all.** The whole file was read into a single `Buffer` before anything was sent, which defeats n8n's filesystem-backed binary mode and hits Node's maximum buffer length well below the 10 GB the Pro plan accepts as job input. The file is now read a chunk at a time and sent straight to storage, so peak memory is one upload part (100 MB) regardless of file size.
+- **Downloading an output file buffered the whole thing twice.** `Download Output File` read the response as an `arraybuffer` and then copied it into a `Buffer`. It now streams the response into n8n's binary store.
+- **No request had a timeout or a retry.** n8n's HTTP helper has neither by default, so a stalled connection held the execution open and a single 503 lost the item. Every request now carries a 30-second timeout (ten minutes for file transfers) and up to two retries with exponential backoff plus jitter, honouring `Retry-After` in both forms HTTP allows. Throttled requests (429) always retry; stalled ones retry only where repeating cannot duplicate anything.
+- **Invalid JSON in `Inputs (JSON)` surfaced as `Unexpected token ... in JSON`.** It now reports which parameter is at fault and what shape it wants.
+- **The trigger could go silently dead.** Activation trusted the endpoint ID stored in the workflow, so if the registration had been removed on Rendobar's side — after a failed deactivation, or by hand in the dashboard — n8n skipped re-registering and the workflow never fired again. Activation now verifies the registration, re-registers when it is gone, and repairs a drifted URL or event list in place instead of creating a duplicate.
+- **A stopped job told you nothing under the default output.** `Simplified` omitted `error`, so a failed job arrived as a bare `status: "failed"`. `error` is now part of the simplified projection; because a job is either complete or stopped, an item still never carries more than ten fields.
+- **The trigger's webhook calls raised raw HTTP errors.** Registration and removal now report what happened and how to get unstuck, like the rest of the node.
+- **An upload whose byte count did not match what was declared assembled a truncated file in silence.** Rendobar sizes the transfer from the count sent at init, so a file that read back short or long produced a wrong object with no complaint. The bytes are counted as they go and a mismatch stops the item.
+- **`Limit`, `Poll Interval` and `Max Wait` were only bounded in the editor.** `typeOptions.minValue` does not constrain an expression, so a poll interval of zero would spin against the API and a negative limit is read by SQLite as "no limit". The floors are enforced at run time too.
+- **`Wait for Completion` gave up silently** when the submission came back without a job ID, handing over an unfinished job as though it had finished. It now says so.
+- **The `Fields` dropdowns were sorted by field name, not by the label shown.** The acronym overrides moved several entries out of order (`ETA`, `Org ID`, `Web URL`). They now sort on what the user reads.
+
+### Added
+
+- **`Job` is a resource locator.** `Get` and `Cancel` now let you pick from your recent jobs, paste an ID, or paste a dashboard link, which the node parses. n8n's UX guidelines ask for a resource locator wherever a single item is selected. **This replaces the plain `Job ID` text field**; a workflow saved with an earlier version keeps executing, but the value has to be re-picked in the editor.
+- **Structured failure output.** With `Continue On Fail` on, the item now carries `code`, `retryable`, `failedPhase`, `httpStatus` and `jobId` beside the `error` message, so an If or Switch node can route a retryable stall differently from a configuration slip. Every operation reports the same shape.
+- **An `Output` parameter on the File resource**, with the same three modes the Job resource has. An uploaded file's record carries 21 fields, over n8n's ten-field guideline for nodes usable as AI tools. `Simplified` keeps the URL, filename, type, size, status and timings and drops the storage bookkeeping (`orgId`, `createdBy`, `scope`, `kind`, `etag`, `checksum`). **This changes the default output shape of `File > Upload`.** Set `Output` to `Raw` to keep the previous behaviour.
+- **A `Sort` collection on `Get Many`**, ordering by creation time, duration or cost, ascending or descending. Placed below `Filters`, per the guidelines.
+- **`Created After` and `Created Before` filters** on `Get Many`.
+- **A test suite for the verification guidelines themselves** — no file-system or environment access in the build, no runtime dependencies, MIT, English only, masked credential fields — plus tests that the README's example workflows still match the node's parameters.
+
+### Changed
+
+- **The API boundary is parsed rather than asserted.** `shared/transport.ts` previously handed back `any` and every caller cast its way to a shape nothing had checked. Responses are now narrowed through total type guards, leaving a single documented assertion where the untyped value enters.
+- Operation copy follows n8n's vocabulary more closely: `Get Many` reads "Retrieve a list of jobs, newest first", `Cancel` reads "Stop a job that has not finished yet".
+- Error messages carry the `[item N]` marker, name the parameter at fault in single quotes, and avoid the words the guidelines rule out. Each one now has a description saying how to get unstuck, keyed off the code Rendobar returned.
+- The `Job Type` list and the `Fields` dropdowns are sorted alphabetically.
+- "binary" no longer appears in parameter descriptions or hints, per n8n's UI guidance; the standard `Input Binary Field` / `Output Binary Field` display names are kept for consistency with n8n's own nodes.
+- The credential fields gained placeholders and clearer descriptions.
+
 ## 0.3.0
 
 ### Fixed
