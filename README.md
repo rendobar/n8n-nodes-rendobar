@@ -38,7 +38,7 @@ Operations are grouped by resource.
 
 - **Create**: submit a job.
   - The **Job Type** dropdown is loaded live from your account, and the parameter fields are discovered from the API, so new job types appear without updating this node.
-  - Each submission sends an idempotency key derived from the execution, node, run and item, so a retried step reuses the same job instead of creating (and charging for) a second one.
+  - Each submission carries an idempotency key. Rendobar keeps one job per key, so a repeat under a key it has already seen comes back as the original job instead of creating (and charging for) a second one. Left empty, **Idempotency Key** is derived from the execution, the node, the run, the item and the values being submitted. Set it to tie a job to something of your own that outlives an execution, such as an order number, and give every distinct submission its own value. See [Retrying a submission](#retrying-a-submission) for what happens when a key is spent.
   - **Specify Parameters** chooses between the generated form and **Parameters (JSON)**, where you write the whole parameter object yourself. Three of the nine live job types describe their parameters as a choice between shapes rather than one flat list, so the form has nothing to render for them: `compose`, `image.generate` and `image.edit` need the JSON editor. So does any job type added after this node was built whose schema does the same.
   - Optional **Wait for Completion**: poll until the job is done and return its result. It holds the execution open, so it suits jobs of a few minutes. Configure **Poll Interval (Seconds)** and **Max Wait (Seconds)**.
   - Optional **Callback URL** and **Callback Headers**: have Rendobar post the finished job somewhere instead of waiting for it. Paired with a Wait node this is how a job running for hours is handled. See [Long jobs](#long-jobs-a-callback-and-a-wait-node).
@@ -147,11 +147,23 @@ Turn on **Settings > Continue On Fail** (or connect the node's error output) and
 That makes an If or a Switch node enough to split retryable stalls from configuration you have to fix:
 
 ```
-{{ $json.retryable }}            → route to a Wait node and try again
+{{ $json.retryable }}            → route to a Wait node, then back into this node
 {{ $json.code === 'INSUFFICIENT_CREDITS' }} → route to an alert
 ```
 
 A job that Rendobar finished in the `failed` state carries the same information in `error` on the item itself, so **Get** can inspect a stopped job without the workflow stopping.
+
+### Retrying a submission
+
+An idempotency key is bound to one job for good. Once that job has stopped without producing anything, Rendobar will not attach a second job to the key and will not hand the dead one back either: it answers `CONFLICT`, naming the job the key holds. So a resubmission only goes through if something moves it onto a different key.
+
+- **Routing `retryable` into a Wait node and back into this node works.** A second pass of the same node is a new run, and the run is one of the things the node builds its key from, so the resubmission is a genuinely fresh one.
+- **Routing it into a second Rendobar node works** for the same reason — the node is part of the key.
+- **Running the workflow again works.** A new execution has a new ID.
+- **n8n's own Settings > Retry On Fail works, but only because the node handles it.** n8n gives a node no way to tell which try it is on: the node is re-run inside the same execution with everything it can read unchanged, so the key it builds comes out identical. When Rendobar reports that key spent, the node moves the submission onto a fresh one derived from the job the old key holds, and keeps doing so within the node's own **Max Tries**.
+- **A key you set in Idempotency Key is left exactly as you wrote it.** It is a statement about which submissions are the same submission, and only its author knows what changing it would mean, so a spent one is reported rather than quietly varied. Make it differ between attempts — ending it in `{{ $runIndex }}` is usually enough — if you want deliberate retries under your own key.
+
+None of this duplicates work. Rendobar refuses a key only once the job holding it has stopped before reaching a runner, so there is no result to lose and nothing to hand back.
 
 ### Timeouts and retries
 
@@ -410,7 +422,8 @@ Tested against n8n's current community-node API (`n8nNodesApiVersion: 1`).
 ## Troubleshooting
 
 - **The trigger will not activate.** Rendobar has to reach your n8n webhook URL over public HTTPS. On a local instance, start n8n with `--tunnel`.
-- **Create Job returns a job you did not just submit.** Idempotency keys are unique per execution, node, run and item. If you are replaying the exact same execution, that is the intended behaviour: the API returns the original job rather than charging you twice.
+- **Create Job returns a job you did not just submit.** That is the idempotency key working as intended: a submission Rendobar has already seen under the same key comes back as the original rather than being charged for twice. It happens when the same item of the same execution reaches the same node again, and when **Idempotency Key** is set to a value another submission already used. Give each distinct submission its own value.
+- **Create Job says the idempotency key is already taken.** The key is bound to a job that stopped before producing anything, and Rendobar will not attach a second job to it. When the node chose the key it moves off it by itself; a key you set by hand is reported instead, naming the job it holds so you can open it with **Get**. Change the value — ending it in `{{ $runIndex }}` is usually enough — then run the workflow again. See [Retrying a submission](#retrying-a-submission).
 - **Wait for Completion runs out of time.** The item reports that the job is still running. Raise **Max Wait (Seconds)**, or move to [Callback URL with a Wait node](#long-jobs-a-callback-and-a-wait-node), which holds nothing open and has no cap to raise.
 - **The workflow never continues past the Wait node.** In order of how often it is the cause: the Wait node's **HTTP Method** is still GET and Rendobar posts; Rendobar cannot reach the address, so a local n8n needs `n8n start --tunnel`; the Create node submitted several jobs into one execution, and the first one back consumed the single resume; or the call was made while n8n could not answer it and the five delivery retries ran out — a restart, a deploy, a dropped tunnel, or a receiver that answered non-2xx. Nothing arrives after that window, so switch on the Wait node's **Limit Wait Time** to give every parked execution a way out. (**Wait for Completion** left on beside **Callback URL** used to be the fourth cause. The node now refuses that combination before submitting the job.)
 - **A parked execution has to be released by hand.** Open it under **Executions**, and stop it. Then set the Wait node's **Limit Wait Time** so the next one releases itself.

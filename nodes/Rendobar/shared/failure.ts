@@ -119,7 +119,7 @@ const DESCRIPTIONS: Record<string, string> = {
 		"Rendobar has no job with that ID on this account. Pick one from the 'Job' list, and note that jobs are removed once their retention window passes.",
 	GONE: 'The files for this job have passed their retention window. Submit the job again to produce them afresh.',
 	CONFLICT:
-		'Whatever this applies to is already in a state that rules it out. Check where it stands — a job with the Get operation, anything else in the Rendobar dashboard — then run the workflow again.',
+		'Rendobar is holding the thing this applies to in a state that rules it out: a job that has already settled, an idempotency key already taken by another job, or an account that is at its webhook endpoint limit. Check where it stands with the Get operation, or in the Rendobar dashboard, then run the workflow again.',
 	VALIDATION_ERROR:
 		"Check 'Job Type', 'Inputs (JSON)' and 'Parameters' against the fields the node loads for that job type, then run the workflow again.",
 	INVALID_JOB_TYPE:
@@ -153,6 +153,42 @@ const DESCRIPTIONS: Record<string, string> = {
 	NOT_IMPLEMENTED: 'Rendobar does not offer that yet. Pick a different operation or job type.',
 };
 
+// The spent-key CONFLICT gets its own line because the generic one above is
+// true of it and useless for it: it says to go and look at where something
+// stands, when what the user needs to know is that the key is the thing in the
+// way and which parameter moves it.
+//
+// It has to name a way out that is real inside n8n. n8n's own "Retry On Fail"
+// setting is NOT one: it re-runs this node inside the same execution and hands
+// it no attempt number, so the automatic key rebuilds identically and lands on
+// the same spent key. What does work is a key the user varies, or the automatic
+// key, which the node renews itself the moment Rendobar reports one spent.
+const SPENT_KEY_DESCRIPTION =
+	"Rendobar keeps one job per idempotency key, so a key that is already taken cannot start a second one. Set 'Idempotency Key' to a value that changes between attempts, such as one ending in {{ $runIndex }} — or leave it empty and let the node pick the key, which it renews as soon as Rendobar reports the old one spent. Open the named job with the Get operation to see what stopped it.";
+
+/**
+ * The job an idempotency key is already bound to, when that is what a response
+ * is refusing.
+ *
+ * `POST /jobs` answers 409 CONFLICT once the key it was given belongs to a job
+ * that stopped with a code Rendobar itself advertises as retryable: the key can
+ * only ever hold one job, so the resubmission it was told to make cannot be
+ * granted under it. `error.details.jobId` names the job, and that is the only
+ * CONFLICT in the API that carries one — every other 409 (a job that has
+ * already settled, the webhook endpoint limit, a key whose row is mid-insert)
+ * sends no details at all. So the presence of the ID is the signal, and reading
+ * it wrong can only ever mean skipping the friendlier copy below.
+ */
+export function spentKeyJobId(
+	statusCode: number,
+	body: JsonValue | undefined,
+): string | undefined {
+	if (statusCode !== 409) return undefined;
+	const reported = objectAt(body, 'error');
+	if (stringAt(reported, 'code') !== 'CONFLICT') return undefined;
+	return stringAt(objectAt(reported, 'details'), 'jobId');
+}
+
 /** The guidance line for a Rendobar code, or undefined when there is none. */
 export function describeApiCode(code: string): string | undefined {
 	return DESCRIPTIONS[code];
@@ -169,15 +205,36 @@ export function failureFromResponse(
 ): FailureDetails {
 	const reported = objectAt(body, 'error');
 	const code = stringAt(reported, 'code') ?? `HTTP_${statusCode}`;
-	const message = stringAt(reported, 'message') ?? `Rendobar responded with status ${statusCode}`;
+
+	// The one place the node writes its own headline over Rendobar's. Rendobar's
+	// reads "Idempotency key "..." is already bound to job ... Retry with a new
+	// idempotency key", which is the right instruction for a client that mints
+	// its own keys and the wrong one for a workflow builder who has never seen
+	// the key: this node generates it. Naming the parameter that sets it, and
+	// the job the key went to, is what makes it actionable here.
+	const spentKeyJob = spentKeyJobId(statusCode, body);
+	const message =
+		spentKeyJob === undefined
+			? (stringAt(reported, 'message') ?? `Rendobar responded with status ${statusCode}`)
+			: `The idempotency key for this submission is already taken by job ${spentKeyJob}, which Rendobar stopped before it produced a result`;
+
+	// An explicit ID from the caller wins: it knows which job it was working on,
+	// while the one on the body is only ever the job a spent key went to.
+	const concerns = jobId ?? spentKeyJob;
 
 	return {
 		message,
-		description: DESCRIPTIONS[code] ?? GENERIC_DESCRIPTION,
+		description:
+			spentKeyJob === undefined
+				? (DESCRIPTIONS[code] ?? GENERIC_DESCRIPTION)
+				: SPENT_KEY_DESCRIPTION,
 		code,
+		// Left false, as every 409 is. Repeating the identical call reproduces
+		// this answer for as long as the key stays the same, so a workflow routing
+		// on `retryable` must not loop on it.
 		retryable: isRetryable(statusCode, code),
 		httpStatus: statusCode,
-		...(jobId ? { jobId } : {}),
+		...(concerns ? { jobId: concerns } : {}),
 	};
 }
 

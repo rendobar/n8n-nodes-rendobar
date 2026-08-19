@@ -308,3 +308,60 @@ test('an empty httpCode is not read as the status zero', () => {
 	assert.notEqual(details.code, 'HTTP_0');
 	assert.equal(details.httpStatus, undefined);
 });
+
+test('a spent idempotency key says which job holds it and which parameter moves it', () => {
+	// `POST /jobs` answers this once the key it was handed belongs to a job that
+	// stopped without reaching a runner. Rendobar's own message ends "Retry with
+	// a new idempotency key", which is right for a client that mints its own and
+	// useless to a workflow builder who has never seen one: this node generates
+	// it. So the node writes the headline, and it has to carry three things —
+	// which job the key went to, that the job produced nothing, and what to do.
+	const details = failureFromResponse(409, {
+		error: {
+			code: 'CONFLICT',
+			message:
+				'Idempotency key "n8n:1:a:0:0:x" is already bound to job job_abc123, which failed with a retryable error. Reusing the key cannot create a new job. Retry with a new idempotency key.',
+			details: { jobId: 'job_abc123' },
+		},
+	});
+
+	assert.equal(details.code, 'CONFLICT');
+	assert.equal(details.httpStatus, 409);
+	assert.equal(details.jobId, 'job_abc123', 'the bound job has to reach the output item');
+	assert.ok(details.message.includes('job_abc123'), 'the headline must name the bound job');
+	assert.match(details.message, /already taken/, 'the headline must say the key is spent');
+	assert.match(details.message, /stopped before it produced a result/);
+	// The way out has to be a lever that exists in the n8n UI.
+	assert.match(details.description, /'Idempotency Key'/);
+	assertCleanCopy(details.message, 'spent key message');
+	assertCleanCopy(details.description, 'spent key guidance');
+
+	// Not retryable: repeating the identical call reproduces this answer for as
+	// long as the key stays the same, so a workflow routing on `retryable` must
+	// not loop on it.
+	assert.equal(details.retryable, false);
+});
+
+test('a conflict with no job attached keeps the general guidance', () => {
+	// The trigger hits 409 when the account is at its webhook endpoint limit, and
+	// Cancel hits it on a job that has already settled. Neither is a spent key,
+	// and neither sends `details.jobId`.
+	const details = failureFromResponse(409, {
+		error: { code: 'CONFLICT', message: 'Job is already cancelled' },
+	});
+
+	assert.equal(details.message, 'Job is already cancelled', "Rendobar's own words are kept");
+	assert.equal(details.description, describeApiCode('CONFLICT'));
+	assert.equal(details.jobId, undefined);
+});
+
+test('a job ID the caller already knows outranks the one on the body', () => {
+	// waitForJob knows which job it was polling; the body only ever names the job
+	// a spent key went to.
+	const details = failureFromResponse(
+		409,
+		{ error: { code: 'CONFLICT', details: { jobId: 'job_bound' } } },
+		'job_polled',
+	);
+	assert.equal(details.jobId, 'job_polled');
+});
