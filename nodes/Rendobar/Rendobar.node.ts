@@ -13,6 +13,7 @@ import {
 import {
 	binaryUploadSource,
 	rendobarApiRequest,
+	rendobarRequest,
 	rendobarUpload,
 	TRANSFER_TIMEOUT_MS,
 } from './shared/transport';
@@ -23,6 +24,7 @@ import {
 	failureFromResponse,
 	failureItemJson,
 	rememberFailure,
+	spentKeyJobId,
 	withItemMarker,
 } from './shared/failure';
 import {
@@ -158,6 +160,107 @@ export function fingerprint(value: JsonValue): string {
 	}
 
 	return `${low.toString(36)}${high.toString(36)}`;
+}
+
+/**
+ * The key that replaces one Rendobar has reported spent.
+ *
+ * `POST /jobs` binds a key to exactly one job and keeps that binding after the
+ * job ends. Once the job it created has stopped with a code Rendobar itself
+ * calls retryable, the key can no longer do anything: it cannot hand back a
+ * usable job and it cannot start a second one, so the API answers 409 and names
+ * the job it is stuck on. The way out is a different key.
+ *
+ * Derived from the base key rather than from the previous one, so the chain
+ * stays a constant length however many attempts walk it, and derived from the
+ * job ID rather than from a counter or a random value, so it is a pure function
+ * of what Rendobar just said. That is what keeps the guarantee the key exists
+ * for: two deliveries of the SAME attempt see the same 409 naming the same job,
+ * build the same replacement, and settle on one job — while two different
+ * submissions still differ in the base key and can never meet here.
+ */
+export function retryKeyFor(baseKey: string, boundJobId: string): string {
+	return `${baseKey}~${boundJobId}`;
+}
+
+/**
+ * How many spent keys one pass of `execute` will walk past before it reports
+ * the conflict instead.
+ *
+ * n8n hands a node no attempt number — `execute()` is re-invoked with an
+ * identical signature and an identical `this` on every try of Retry On Fail, so
+ * nothing the node can read distinguishes try 3 from try 1 (checked against
+ * n8n-workflow 2.16.0: no `getTryIndex`, nothing per-attempt on `INode`,
+ * `IExecuteData`, `ITaskData` or the expression proxy, and `$runIndex` counts
+ * loop passes, not tries). What the node CAN read is the budget: `maxTries` is
+ * on the node object.
+ *
+ * That budget is the right size. Try N of Retry On Fail rebuilds the same base
+ * key, so it meets the job try 1 created, then the job try 2 created, and so on
+ * — one hop per attempt already spent. Anything beyond the node's own retry
+ * budget is not a case Retry On Fail can produce, so it is reported rather than
+ * chased, and the ceiling keeps a hand-edited `maxTries` from turning one item
+ * into an unbounded run of submissions.
+ *
+ * Retry On Fail off means no attempt can already be spent, so one try is all
+ * this ever needs.
+ */
+export function spentKeyBudget(node: INode): number {
+	if (node.retryOnFail !== true) return 1;
+	// n8n's own default when Retry On Fail is switched on without touching it.
+	const tries = readNumber(node, 'maxTries') ?? 3;
+	return Math.min(10, Math.max(1, Math.floor(tries)));
+}
+
+/**
+ * Submits one job, moving off an idempotency key Rendobar reports as spent.
+ *
+ * `rendobarRequest` rather than `rendobarApiRequest`, because the 409 is data
+ * here before it is a stop: it is the API telling us the key we chose is bound
+ * to a job that stopped without ever reaching a runner, and that a resubmission
+ * under it is impossible. Nothing is duplicated by moving off it — the job it
+ * names produced no result and is over — so the deliberate retry the caller
+ * asked for is granted under {@link retryKeyFor} instead of being reported as
+ * something the workflow builder has to go and fix.
+ *
+ * `budget` is what stops that being a licence to submit forever: one attempt
+ * per key the caller could plausibly have spent, and no more. When it runs out,
+ * or when the 409 is any other conflict, the response is raised with the copy
+ * in ./shared/failure.
+ */
+export async function submitJob(
+	this: IExecuteFunctions,
+	submission: JsonObject,
+	baseKey: string,
+	budget: number,
+	itemIndex: number,
+): Promise<JsonValue> {
+	let idempotencyKey = baseKey;
+
+	for (let attempt = 1; ; attempt++) {
+		const response = await rendobarRequest.call(this, {
+			method: 'POST',
+			path: '/jobs',
+			body: { ...submission, idempotencyKey },
+			// Safe to repeat: the key means a second delivery of THIS attempt
+			// settles on the job the first delivery created rather than a new one.
+			idempotent: true,
+		});
+
+		if (response.statusCode >= 200 && response.statusCode < 300) return response.body;
+
+		const boundJobId = spentKeyJobId(response.statusCode, response.body);
+		if (boundJobId === undefined || attempt >= budget) {
+			throw apiError(
+				this.getNode(),
+				failureFromResponse(response.statusCode, response.body),
+				response.body,
+				itemIndex,
+			);
+		}
+
+		idempotencyKey = retryKeyFor(baseKey, boundJobId);
+	}
 }
 
 /**
@@ -686,6 +789,17 @@ export class Rendobar implements INodeType {
 				],
 			},
 			{
+				displayName: 'Idempotency Key',
+				name: 'idempotencyKey',
+				type: 'string',
+				default: '',
+				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
+				placeholder: 'e.g. order-4417',
+				description:
+					'What makes this submission the same submission. Rendobar keeps one job per key, so a repeat under a key it has seen returns the original job instead of charging for a second one. Leave empty and the node builds a key from the execution, the node, the run, the item and the values being submitted, which covers a repeat inside one execution. Set it to tie the job to something of your own that outlives an execution, such as an order number, and give every distinct submission its own value.',
+				hint: 'A key is bound to one job for good. Once that job has stopped without producing anything, only a different key can submit again — so if you retry deliberately, make sure this changes, for example by ending it in {{ $runIndex }}.',
+			},
+			{
 				displayName: 'Job',
 				name: 'jobId',
 				type: 'resourceLocator',
@@ -1145,18 +1259,30 @@ export class Rendobar implements INodeType {
 					// submission and so keeps the same key. Two genuinely identical
 					// requests still collapse onto one job, which is the behaviour
 					// idempotency is for.
-					const idempotencyKey = `n8n:${executionId}:${node.id}:${runIndex}:${i}:${fingerprint(submission)}`;
+					//
+					// Every component of that is stable inside one execution, which is
+					// deliberate and is also why it cannot be the whole answer: a
+					// DELIBERATE retry of the same submission rebuilds the same key, and
+					// Rendobar refuses a key whose job stopped without ever running.
+					// The 'Idempotency Key' parameter is the lever for that, and
+					// submitJob walks off a key the node picked itself once Rendobar
+					// says it is spent.
+					const chosenKey = toIdentifier(this.getNodeParameter('idempotencyKey', i, ''));
+					const idempotencyKey =
+						chosenKey === ''
+							? `n8n:${executionId}:${node.id}:${runIndex}:${i}:${fingerprint(submission)}`
+							: chosenKey;
 
-					const created = await rendobarApiRequest.call(
+					const created = await submitJob.call(
 						this,
-						{
-							method: 'POST',
-							path: '/jobs',
-							body: { ...submission, idempotencyKey },
-							// Safe to repeat: the idempotency key above means a second attempt
-							// settles on the job the first one created rather than a new one.
-							idempotent: true,
-						},
+						submission,
+						idempotencyKey,
+						// The node may replace a key it invented. It must not invent a
+						// variant of one the user asserted: a key set by hand is a promise
+						// about which submissions are the same submission, and only its
+						// author knows what changing it would mean. That conflict is
+						// reported, with the copy that names this parameter.
+						chosenKey === '' ? spentKeyBudget(node) : 1,
 						i,
 					);
 
