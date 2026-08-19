@@ -28,6 +28,11 @@ function allProperties(list) {
 		if (Array.isArray(property.options)) {
 			// A collection's options are properties; a dropdown's options are values.
 			found.push(...allProperties(property.options.filter((option) => option.type !== undefined)));
+			// A fixedCollection's options are named groups whose `values` are the
+			// real properties, so the same rules have to reach into them.
+			for (const option of property.options) {
+				if (Array.isArray(option.values)) found.push(...allProperties(option.values));
+			}
 		}
 		if (Array.isArray(property.modes)) found.push(...property.modes);
 	}
@@ -78,8 +83,14 @@ test('an operation description adds context instead of restating the name', () =
 test('every placeholder starts with "e.g."', () => {
 	const placeholders = everyProperty
 		// A collection's `placeholder` is its "Add …" button label, not an example
-		// value, so it is exempt.
-		.filter((property) => property.placeholder && property.type !== 'collection')
+		// value, so it is exempt. The same is true of a fixedCollection, which is
+		// how n8n's own HTTP Request node labels its header rows ("Add Parameter").
+		.filter(
+			(property) =>
+				property.placeholder &&
+				property.type !== 'collection' &&
+				property.type !== 'fixedCollection',
+		)
 		.map((property) => property.placeholder);
 
 	assert.ok(placeholders.length > 0);

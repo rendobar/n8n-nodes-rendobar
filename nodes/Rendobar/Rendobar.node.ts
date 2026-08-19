@@ -41,6 +41,7 @@ import {
 	type JsonObject,
 	type JsonValue,
 } from './shared/json';
+import { buildCallback } from './shared/callback';
 import { getJobTypes } from './listSearch/getJobTypes';
 import { getJobs } from './listSearch/getJobs';
 import { getJobFields } from './methods/getJobFields';
@@ -261,6 +262,32 @@ function requireIdentifier(
 	);
 }
 
+/**
+ * The job's parameters, from whichever of the two editors is on show.
+ *
+ * The form is built from the flat field list `GET /jobs/types/:type/schema`
+ * projects, and a job type whose parameters are a union of shapes has no such
+ * projection — the API returns no fields for it, and the form would submit an
+ * empty object the API then rejects. 'Using JSON' is the way through, and it
+ * also covers any job type added after this node was built.
+ */
+function readParams(this: IExecuteFunctions, node: INode, itemIndex: number): JsonObject {
+	if (toIdentifier(this.getNodeParameter('paramsMode', itemIndex, 'fields')) !== 'json') {
+		return readObject(this.getNodeParameter('params', itemIndex, {}), 'value') ?? {};
+	}
+
+	const parsed = readJsonParameter(this.getNodeParameter('paramsJson', itemIndex, {}));
+	if (parsed.ok) return parsed.value;
+
+	throw invalidParameter(
+		node,
+		'Parameters (JSON)',
+		parsed.reason === 'unparsable' ? 'is not valid JSON' : 'is not a JSON object',
+		'Give it a JSON object of the job type\'s settings, for example { "command": "-i {{source}} -c:v libx264 {{output}}" }. The parameter reference for each job type is at https://rendobar.com/docs.',
+		itemIndex,
+	);
+}
+
 // ── Waiting ───────────────────────────────────────────────────────────────
 
 // Poll GET /jobs/:id until the job reaches a terminal state or maxWait elapses.
@@ -298,7 +325,7 @@ async function waitForJob(
 				itemIndex,
 			);
 			const description =
-				"Raise 'Max Wait (Seconds)', collect the job later with the Get operation, or start the workflow from the Rendobar Trigger node, which reacts to the finished job instead of holding this execution open.";
+				"For a job this long, set 'Callback URL' to the resume URL of a Wait node placed after this one. n8n then parks the execution and picks it up when the job ends, with no worker held open and no ceiling to raise. Otherwise raise 'Max Wait (Seconds)', or collect the job later with the Get operation.";
 
 			throw rememberFailure(
 				new NodeOperationError(this.getNode(), message, { itemIndex, description }),
@@ -495,12 +522,36 @@ export class Rendobar implements INodeType {
 					'The files the job reads, as a JSON object keyed by input name. Each value is a publicly reachable URL, or the URL an Upload returned.',
 			},
 			{
+				displayName: 'Specify Parameters',
+				name: 'paramsMode',
+				type: 'options',
+				noDataExpression: true,
+				default: 'fields',
+				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
+				description: 'How to give the job its settings',
+				options: [
+					{
+						name: 'Using Fields Below',
+						value: 'fields',
+						description: 'Fill in a form built from the job type\'s own schema',
+					},
+					{
+						name: 'Using JSON',
+						value: 'json',
+						description:
+							'Write the whole parameter object yourself, for job types whose settings have no single form',
+					},
+				],
+			},
+			{
 				displayName: 'Parameters',
 				name: 'params',
 				type: 'resourceMapper',
 				noDataExpression: true,
 				default: { mappingMode: 'defineBelow', value: null },
-				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
+				displayOptions: {
+					show: { resource: ['job'], operation: ['create'], paramsMode: ['fields'] },
+				},
 				description: "The settings for the chosen job type, loaded live from 'Job Type'",
 				typeOptions: {
 					loadOptionsDependsOn: ['jobType.value'],
@@ -514,13 +565,25 @@ export class Rendobar implements INodeType {
 				},
 			},
 			{
+				displayName: 'Parameters (JSON)',
+				name: 'paramsJson',
+				type: 'json',
+				default: '{}',
+				displayOptions: {
+					show: { resource: ['job'], operation: ['create'], paramsMode: ['json'] },
+				},
+				placeholder: 'e.g. { "schemaVersion": "1.0", "prompt": "a 15 second product tour" }',
+				description:
+					"The settings for the chosen job type, as a JSON object. Use this for job types whose settings are a choice between shapes, such as Compose, Image Generate and Image Edit, and for anything the form cannot express. See the parameter reference at https://rendobar.com/docs.",
+			},
+			{
 				displayName: 'Wait for Completion',
 				name: 'waitForCompletion',
 				type: 'boolean',
 				default: false,
 				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
 				description:
-					'Whether to hold the execution open until the job finishes and return its result. Good for short jobs. For long jobs prefer the Rendobar Trigger node, which reacts to the finished job instead.',
+					"Whether to hold the execution open until the job finishes and return its result. Suits jobs of a few minutes. For anything longer use 'Callback URL' with a Wait node, which parks the execution instead of holding a worker.",
 			},
 			{
 				displayName: 'Poll Interval (Seconds)',
@@ -544,6 +607,55 @@ export class Rendobar implements INodeType {
 				},
 				description:
 					'How long to keep waiting. Once this passes, the item stops and reports that the job is still running.',
+			},
+			{
+				displayName: 'Callback URL',
+				name: 'callbackUrl',
+				type: 'string',
+				default: '',
+				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
+				placeholder: 'e.g. {{ $execution.resumeUrl }}',
+				description:
+					"Where Rendobar sends the finished job. Put a Wait node set to 'On Webhook Call' after this one and use its resume URL here. n8n then parks the execution instead of holding it open, so a job running for hours occupies no worker and needs no polling. Leave empty to send nothing.",
+				hint: "Set the Wait node's HTTP Method to POST, which is not its default. Rendobar posts the job on every ending, including one that stopped or was cancelled, so a parked execution is never left waiting.",
+			},
+			{
+				displayName: 'Callback Headers',
+				name: 'callbackHeaders',
+				type: 'fixedCollection',
+				typeOptions: { multipleValues: true },
+				default: {},
+				placeholder: 'Add Header',
+				displayOptions: {
+					show: { resource: ['job'], operation: ['create'] },
+					hide: { callbackUrl: [''] },
+				},
+				description:
+					"Headers to send with the callback, so the receiver can tell a genuine call apart from anything else that finds the address. On a Wait node, match these to its own Header Auth credential. Names beginning with X-Rendobar- are kept for Rendobar's own delivery details.",
+				options: [
+					{
+						displayName: 'Header',
+						name: 'header',
+						values: [
+							{
+								displayName: 'Name',
+								name: 'name',
+								type: 'string',
+								default: '',
+								placeholder: 'e.g. Authorization',
+								description: 'Name of the header to send',
+							},
+							{
+								displayName: 'Value',
+								name: 'value',
+								type: 'string',
+								typeOptions: { password: true },
+								default: '',
+								description: 'Value to send under that name',
+							},
+						],
+					},
+				],
 			},
 			{
 				displayName: 'Job',
@@ -952,10 +1064,23 @@ export class Rendobar implements INodeType {
 						);
 					}
 
+					const callback = buildCallback(
+						this.getNodeParameter('callbackUrl', i, ''),
+						this.getNodeParameter('callbackHeaders', i, {}),
+					);
+					if (!callback.ok) {
+						throw invalidParameter(node, callback.parameter, callback.what, callback.how, i);
+					}
+
 					const submission: JsonObject = {
 						type: jobType,
 						inputs: parsed.value,
-						params: readObject(this.getNodeParameter('params', i, {}), 'value') ?? {},
+						params: readParams.call(this, node, i),
+						// Part of the submission, and so part of the fingerprint behind the
+						// idempotency key: two jobs that differ only in where the result is
+						// delivered are two different requests, and `POST /jobs` registers
+						// the callback only for a freshly admitted job.
+						...(callback.callback === undefined ? {} : { callback: callback.callback }),
 					};
 
 					// The key has to be stable across n8n's retry of this step (so a

@@ -209,3 +209,37 @@ test('both nodes ship a codex file pointing at the documentation', () => {
 		assert.ok(codex.resources.credentialDocumentation[0].url.startsWith('https://'));
 	}
 });
+
+test("n8n's own Custom API Call is injectable into this node", () => {
+	// n8n's backend appends a "Custom API Call" entry to every `resource` and
+	// `operation` dropdown of a latest-version node whose credential declares
+	// `authenticate` (packages/cli/src/load-nodes-and-credentials.ts,
+	// injectCustomApiCallOptions -> supportsProxyAuth). Choosing it points the
+	// user at the HTTP Request node with the Rendobar credential already applied,
+	// which reaches every endpoint this node does not model.
+	//
+	// That is why the package ships no Custom API Call operation of its own: the
+	// affordance already exists, a hand-written one would be a second and worse
+	// path to the same place, and the injector skips a dropdown that already ends
+	// with such an entry.
+	const { RendobarApi } = require('../dist/credentials/RendobarApi.credentials.js');
+	const credential = new RendobarApi();
+	assert.ok(credential.authenticate, 'no authenticate means n8n injects nothing');
+
+	const { Rendobar } = require('../dist/nodes/Rendobar/Rendobar.node.js');
+	const description = new Rendobar().description;
+	assert.equal(description.defaultVersion, undefined, 'the node must read as its latest version');
+
+	const dropdowns = description.properties.filter((property) =>
+		['resource', 'operation'].includes(property.name),
+	);
+	assert.ok(dropdowns.length >= 3, 'expected a Resource dropdown and one Operation per resource');
+
+	for (const dropdown of dropdowns) {
+		assert.ok(Array.isArray(dropdown.options), `${dropdown.name} has no options to append to`);
+		assert.ok(
+			!dropdown.options.some((option) => option.value === '__CUSTOM_API_CALL__'),
+			`${dropdown.name} ships its own Custom API Call, which the injector would then skip`,
+		);
+	}
+});

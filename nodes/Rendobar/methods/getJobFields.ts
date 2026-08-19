@@ -6,7 +6,8 @@ import type {
 	ResourceMapperFields,
 } from 'n8n-workflow';
 import { rendobarApiRequest } from '../shared/transport';
-import { booleanAt, objectAt, objectsAt, stringAt } from '../shared/json';
+import { arrayAt, isJsonObject, objectAt, objectsAt, booleanAt, stringAt } from '../shared/json';
+import type { JsonValue } from '../shared/json';
 
 // Rendobar's connector field types map onto n8n's resource-mapper field types.
 // A nested parameter (Rendobar type "json") becomes an object field, which n8n
@@ -23,6 +24,28 @@ function defaultValueOf(value: unknown): string | number | boolean | null {
 	return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
 		? value
 		: null;
+}
+
+/**
+ * Whether the job type has parameters that the flat field list could not carry.
+ *
+ * `GET /jobs/types/:type/schema` returns both a flat `fields` projection and the
+ * whole `jsonSchema`. A job type whose parameters are a union — `compose` is an
+ * `anyOf` of a timeline shape and a prompt shape, the two image types are
+ * `oneOf` — has no single flat form, so the projection comes back empty while
+ * the schema plainly describes required parameters. Telling that apart from a
+ * job type that genuinely takes none is what decides whether the user is
+ * pointed at 'Parameters (JSON)' or told there is nothing to fill in.
+ */
+export function describesParameters(jsonSchema: JsonValue | undefined): boolean {
+	if (!isJsonObject(jsonSchema)) return false;
+
+	for (const key of ['anyOf', 'oneOf', 'allOf']) {
+		if ((arrayAt(jsonSchema, key) ?? []).length > 0) return true;
+	}
+
+	const properties = objectAt(jsonSchema, 'properties');
+	return properties !== undefined && Object.keys(properties).length > 0;
 }
 
 /**
@@ -76,12 +99,12 @@ export async function getJobFields(this: ILoadOptionsFunctions): Promise<Resourc
 		},
 	);
 
+	if (fields.length > 0) return { fields };
+
 	return {
 		fields,
-		...(fields.length === 0
-			? {
-					emptyFieldsNotice: `The '${jobType}' job type takes no parameters. Give it its files in 'Inputs (JSON)'.`,
-				}
-			: {}),
+		emptyFieldsNotice: describesParameters(objectAt(objectAt(response, 'data'), 'jsonSchema'))
+			? `The '${jobType}' job type takes parameters that cannot be shown as a form. Set 'Specify Parameters' to 'Using JSON' and write them there.`
+			: `The '${jobType}' job type takes no parameters. Give it its files in 'Inputs (JSON)'.`,
 	};
 }

@@ -10,6 +10,7 @@ n8n community node for [Rendobar](https://rendobar.com), a media processing API.
 - [Credentials](#credentials)
 - [Nodes](#nodes)
 - [Job result](#job-result-the-same-shape-for-every-job-type)
+- [Long jobs](#long-jobs-a-callback-and-a-wait-node)
 - [When something goes wrong](#when-something-goes-wrong)
 - [Example workflows](#example-workflows)
 - [Compatibility](#compatibility)
@@ -38,7 +39,9 @@ Operations are grouped by resource.
 - **Create**: submit a job.
   - The **Job Type** dropdown is loaded live from your account, and the parameter fields are discovered from the API, so new job types appear without updating this node.
   - Each submission sends an idempotency key derived from the execution, node, run and item, so a retried step reuses the same job instead of creating (and charging for) a second one.
-  - Optional **Wait for Completion**: poll until the job is done and return its result. It holds the execution open, so it's best for short jobs. For long jobs use the trigger below. Configure **Poll Interval (Seconds)** and **Max Wait (Seconds)**.
+  - **Specify Parameters** chooses between the generated form and **Parameters (JSON)**, where you write the whole parameter object yourself. Three of the nine live job types describe their parameters as a choice between shapes rather than one flat list, so the form has nothing to render for them: `compose`, `image.generate` and `image.edit` need the JSON editor. So does any job type added after this node was built whose schema does the same.
+  - Optional **Wait for Completion**: poll until the job is done and return its result. It holds the execution open, so it suits jobs of a few minutes. Configure **Poll Interval (Seconds)** and **Max Wait (Seconds)**.
+  - Optional **Callback URL** and **Callback Headers**: have Rendobar post the finished job somewhere instead of waiting for it. Paired with a Wait node this is how a job running for hours is handled. See [Long jobs](#long-jobs-a-callback-and-a-wait-node).
 - **Get**: retrieve a job with its status and result.
   - **Job** is a resource locator: pick from your recent jobs, paste an ID, or paste a dashboard link (`https://app.rendobar.com/jobs/...`) and the node extracts the ID. All three modes accept expressions.
   - Optional **Download Output File**: fetch the headline result file (`file.url`) onto the item so the next node can use it directly. The download is streamed to n8n's binary store rather than buffered, so a multi-gigabyte result does not have to fit in memory. Applies only to finished jobs that produced a file.
@@ -50,6 +53,10 @@ Operations are grouped by resource.
 
 - **Upload**: send a file from a previous node to Rendobar and get back a URL to use as a job input. Files are ephemeral and auto-delete after 24 hours. Pair it with Job > Create: upload, then reference the returned `url` in the next node's inputs.
   - The file is read a chunk at a time and sent straight to storage, so peak memory stays at one upload part (100 MB) no matter how large the file is. On an n8n running in filesystem or S3 binary mode the file is never loaded into the process at all.
+
+#### Anything else in the API
+
+The node models jobs and files. For the rest of the API — billing state, job logs, share links, webhook deliveries — pick **Custom API Call**, which n8n adds to the **Resource** and **Operation** dropdowns by itself because the Rendobar credential carries its own authentication. Choosing it points you at the HTTP Request node with the credential already applied, so you can call any endpoint without handling a key. That is why this package ships no Custom API Call operation of its own: a hand-written one would be a second and worse route to the same place.
 
 #### Output
 
@@ -77,6 +84,44 @@ Set **Output** to **Raw** when you also need `output`, `steps`, `region`, timing
 Starts a workflow when a Rendobar event fires. Select the events to listen for (job completed, failed, cancelled, created, started, and balance events). On activation the node registers its webhook URL with Rendobar and removes it on deactivation.
 
 > Rendobar must be able to reach the webhook URL over HTTPS. This works on n8n Cloud or a tunnelled / publicly hosted instance. A plain `localhost` n8n is not reachable from the API, so use `n8n start --tunnel` to test locally.
+
+## Long jobs: a callback and a Wait node
+
+Jobs run up to an hour on Free and nine hours on Pro. **Wait for Completion** cannot cover that. It holds the execution open and occupies a worker for the whole run, and the cap you set is a cap you have to guess.
+
+**Callback URL** is the way through, and it is n8n's own pattern for a slow third-party API. Put a **Wait** node after **Job > Create**, set the Wait node to resume **On Webhook Call**, and set Callback URL to an expression:
+
+```
+{{ $execution.resumeUrl }}
+```
+
+Rendobar posts the finished job to that address, n8n picks the execution back up, and nothing is held open in between. `$execution.resumeUrl` resolves on any node, including the one that runs before the Wait node, so the Create node can hand it over at submit time.
+
+Four things decide whether this works:
+
+1. **Set the Wait node's HTTP Method to POST.** It defaults to GET, and a resume address called with a method it does not expect answers 404 without saying why. This is the setting that most often makes the recipe quietly do nothing.
+2. **Read the job from `$json.body`.** n8n wraps a resume call as `{ headers, params, query, body }`, so the ID is at `{{ $json.body.data.jobId }}` and not at `{{ $json.data.jobId }}`.
+3. **Fetch the job again rather than trusting what arrived.** Feed that ID into a Rendobar **Get**, and you get fresh download links, the node's usual output shape, and data that came over your own authenticated connection.
+4. **One job per execution.** A resume call continues the whole execution once, so a Create node that submitted five jobs continues on whichever finishes first and loses the other four. Put the submit-and-wait pair in a sub-workflow and call it once per item.
+
+### Authenticating the callback
+
+The resume address is a capability. Anyone holding it can continue the execution, so treat it the way you would treat a key.
+
+Recent n8n versions append a random `signature` token to the address and check it before resuming. Older ones do not, and an n8n execution ID is a sequential integer, so on those the address is guessable by anyone who can reach your instance.
+
+For a second layer, set the Wait node's **Authentication** to **Header Auth**, give it a header name and value, and add the same pair under **Callback Headers**. Rendobar sends them with the call and n8n checks them before resuming.
+
+Rendobar can also sign a callback with an HMAC in `X-Rendobar-Signature`, and this node deliberately does not offer that. The call lands on n8n's own resume endpoint rather than on any node, so nothing in the workflow is in a position to check a signature, and a switch that implied otherwise would be worse than none. Header Auth is the equivalent n8n can actually enforce, and step 3 above means the payload never has to be trusted in the first place.
+
+### What Rendobar sends, and when
+
+- The call fires on every ending, whether the job completed, stopped or was cancelled, and that cannot be turned off. A parked execution is never left waiting.
+- The body is the same envelope the trigger node delivers: `{ version, event, deliveryId, timestamp, orgId, data }`.
+- A call not answered with a 2xx is retried five times with backoff, over roughly the next two to five minutes. That window is also what covers the gap between a job finishing and n8n arriving at the Wait node, which n8n answers with a 409 until it gets there.
+- Delivery is over public HTTPS. A `localhost` n8n is not reachable from Rendobar, so run `n8n start --tunnel` or put the instance behind a public address. The node checks the address before submitting the job and tells you if it cannot be reached.
+- Headers whose name begins with `X-Rendobar-` are kept for Rendobar's own delivery details and are refused.
+- Rendobar can also send a ping when a job starts running. This node does not offer it, because on a resume address it would continue the execution while the job is still going, which is the one thing the recipe exists to avoid.
 
 ## When something goes wrong
 
@@ -111,7 +156,7 @@ A job that Rendobar finished in the `failed` state carries the same information 
 
 ## Example workflows
 
-Import either JSON below with **Workflows > Import from File / Clipboard**, then pick your Rendobar credential on the Rendobar nodes.
+Import any of the JSON below with **Workflows > Import from File / Clipboard**, then pick your Rendobar credential on the Rendobar nodes.
 
 ### 1. Compress a video and wait for the result
 
@@ -225,6 +270,130 @@ Chain **File > Upload** into **Job > Create**: the upload returns an asset with 
 {{ JSON.stringify({ source: $json.url }) }}
 ```
 
+### 4. A long job, with no worker held open
+
+The pattern from [Long jobs](#long-jobs-a-callback-and-a-wait-node), end to end. The Create node submits and returns straight away, the Wait node parks the execution, and Rendobar's call brings it back. The Wait node is already set to **POST**, which is not its default.
+
+It also shows **Parameters (JSON)**: `image.generate` offers a choice of parameter shapes, so the generated form has nothing to render and the JSON editor is the way to configure it.
+
+```json
+{
+	"name": "Rendobar: generate an image without holding the execution",
+	"nodes": [
+		{
+			"parameters": {},
+			"id": "0a4c8f21-3d55-4a0e-9b6c-77e2f1a9c004",
+			"name": "When clicking 'Execute workflow'",
+			"type": "n8n-nodes-base.manualTrigger",
+			"typeVersion": 1,
+			"position": [
+				0,
+				0
+			]
+		},
+		{
+			"parameters": {
+				"resource": "job",
+				"operation": "create",
+				"jobType": {
+					"__rl": true,
+					"mode": "id",
+					"value": "image.generate"
+				},
+				"inputs": "{}",
+				"paramsMode": "json",
+				"paramsJson": "{\n  \"model\": \"standard\",\n  \"prompt\": \"a cutaway diagram of a espresso machine, technical illustration\",\n  \"width\": 1024,\n  \"height\": 1024\n}",
+				"callbackUrl": "={{ $execution.resumeUrl }}",
+				"output": "simplified"
+			},
+			"id": "5b8e2d10-9c31-42f7-8a4d-6e0b3c7f1d92",
+			"name": "Generate image",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobar",
+			"typeVersion": 1,
+			"position": [
+				220,
+				0
+			]
+		},
+		{
+			"parameters": {
+				"resume": "webhook",
+				"httpMethod": "POST",
+				"options": {}
+			},
+			"id": "c2f7a940-1b6e-4d83-9f05-8a1c4e6b2d37",
+			"name": "Wait for the callback",
+			"type": "n8n-nodes-base.wait",
+			"typeVersion": 1.1,
+			"position": [
+				440,
+				0
+			],
+			"webhookId": "f4a1c8b2-5d09-4e77-b3a6-9c2e1f0d7a55"
+		},
+		{
+			"parameters": {
+				"resource": "job",
+				"operation": "get",
+				"jobId": {
+					"__rl": true,
+					"mode": "id",
+					"value": "={{ $json.body.data.jobId }}"
+				},
+				"downloadOutput": true,
+				"outputBinaryProperty": "data",
+				"output": "simplified"
+			},
+			"id": "9d3b6e58-4a72-4c11-85fe-2b7d0a9c3e61",
+			"name": "Fetch job and download file",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobar",
+			"typeVersion": 1,
+			"position": [
+				660,
+				0
+			]
+		}
+	],
+	"connections": {
+		"When clicking 'Execute workflow'": {
+			"main": [
+				[
+					{
+						"node": "Generate image",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Generate image": {
+			"main": [
+				[
+					{
+						"node": "Wait for the callback",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		},
+		"Wait for the callback": {
+			"main": [
+				[
+					{
+						"node": "Fetch job and download file",
+						"type": "main",
+						"index": 0
+					}
+				]
+			]
+		}
+	}
+}
+```
+
+The Get node re-fetches over your authenticated connection, so the download link is fresh and the payload that arrived never has to be trusted.
+
 ## Compatibility
 
 Tested against n8n's current community-node API (`n8nNodesApiVersion: 1`).
@@ -233,7 +402,9 @@ Tested against n8n's current community-node API (`n8nNodesApiVersion: 1`).
 
 - **The trigger will not activate.** Rendobar has to reach your n8n webhook URL over public HTTPS. On a local instance, start n8n with `--tunnel`.
 - **Create Job returns a job you did not just submit.** Idempotency keys are unique per execution, node, run and item. If you are replaying the exact same execution, that is the intended behaviour: the API returns the original job rather than charging you twice.
-- **Wait for Completion runs out of time.** The item reports that the job is still running. Raise **Max Wait (Seconds)**, or switch to the Rendobar Trigger, which does not hold the execution open.
+- **Wait for Completion runs out of time.** The item reports that the job is still running. Raise **Max Wait (Seconds)**, or move to [Callback URL with a Wait node](#long-jobs-a-callback-and-a-wait-node), which holds nothing open and has no cap to raise.
+- **The workflow never continues past the Wait node.** In order of how often it is the cause: the Wait node's **HTTP Method** is still GET and Rendobar posts; Rendobar cannot reach the address, so a local n8n needs `n8n start --tunnel`; the Create node submitted several jobs into one execution, and the first one back consumed the single resume; or **Wait for Completion** was left on beside **Callback URL**, so the call arrived and was retried while the execution was still blocked at the Create node.
+- **The Parameters panel is empty.** `compose`, `image.generate` and `image.edit` describe their parameters as a choice between shapes, which the generated form cannot render. Set **Specify Parameters** to **Using JSON** and write them in **Parameters (JSON)**; the panel says so too.
 - **A field you need is missing from the item.** Set **Output** to **Raw**, or to **Selected Fields** and pick it.
 - **A job stopped and you want to know why.** With the default **Simplified** output, a stopped job carries `error.code`, `error.message`, `error.detail`, `error.retryable` and `error.failedPhase`.
 - **The Job list is empty.** It shows your recent jobs from `GET /jobs`. A brand new account has none yet — switch the locator to **By ID** or **By URL**.
