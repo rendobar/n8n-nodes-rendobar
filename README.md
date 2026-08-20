@@ -1,6 +1,6 @@
 # @rendobar/n8n-nodes-rendobar
 
-n8n community node for [Rendobar](https://rendobar.com), a media processing API. Submit, track, and cancel video jobs from your workflows, and start workflows when jobs finish.
+n8n community node for [Rendobar](https://rendobar.com), a media processing API. Submit, track, download and cancel video jobs from your workflows, read the account balance, and start workflows when jobs finish.
 
 [n8n](https://n8n.io) is a fair-code workflow automation platform.
 
@@ -48,10 +48,27 @@ Operations are grouped by resource.
 - **Get**: retrieve a job with its status and result.
   - **Job** is a resource locator: pick from your recent jobs, paste an ID, or paste a dashboard link (`https://app.rendobar.com/jobs/...`) and the node extracts the ID. All three modes accept expressions.
   - Optional **Download Output File**: fetch the headline result file (`file.url`) onto the item so the next node can use it directly. The download is streamed to n8n's binary store rather than buffered, so a multi-gigabyte result does not have to fit in memory. Applies only to finished jobs that produced a file.
+- **Download Output**: fetch the file a finished job produced onto the item, ready for the next node.
+  - The same streamed download **Get** offers as a switch, promoted to an operation of its own, because an operation list is where people look for a verb. Pick the job the same three ways, name the field to put the file in, and the item comes back carrying the job with the file beside it.
+  - There is one download path in the node and both routes use it, so a job whose link has expired or whose storage stalls reports the same two things either way, and neither leaves a socket open.
+  - **It refuses a job with no file instead of handing back an empty item.** Three states mean no file: the job has not finished yet, the job type computes data rather than a file (`ffprobe` and anything else whose result is a report), or the retention window has passed and the files are gone. The stop names the job, lists those three, and is marked retryable only while the job is still on its way to a result. On **Get** the switch stays silent in the same situation, which is right there: the job is what you asked for and the file was an extra.
+- **Get Logs**: retrieve what the runner recorded while the job ran. This is the operation to reach for after **Job Failed** on the trigger.
+  - One item per job, carrying `jobId`, `status` and `logs`. Each entry in `logs` is `{ timestamp, level, event, message }` plus `step`, `durationMs` and `meta` where the runner set them. `level` is `info`, `warn`, `error` or `debug`, and `event` is one of `job.start`, `step.start`, `step.progress`, `step.complete`, `step.error`, `detail`, `job.complete` or `job.error`. The whole log arrives on one item rather than fanned out, so `{{ $json.logs.map(l => l.message).join('
+') }}` is enough to put it in a message.
+  - **A job with no logs comes back with `logs: []` and does not stop the workflow.** Logs exist once a runner has reported them, so a job still waiting or running has none yet, a job that never reached a runner never will, and a job whose retention window has passed had its logs swept along with its files. That last case is why the field is `logs` and not a promise: `status` on the same item is what tells the three apart.
+  - The node reads the job before the logs. `GET /jobs/{id}/logs` answers 404 both for a job that does not exist and for a job with no logs, and the only difference is the sentence in the body, so a job ID nobody meant to type stops the item with the message that fits rather than reading as an empty log.
 - **Get Many**: retrieve a list of jobs, newest first. Set **Return All** to page through every match, or leave it off and set a **Limit**. **Filters** narrows by status, job type, originating client and creation date. **Sort** orders by creation time, duration or cost, ascending or descending.
   - **Return All is not a consistent snapshot.** It reads pages one after another by offset, over an ordering — creation time — with no tiebreaker under it, and jobs submitted together really do share a millisecond. Two page queries are free to order those rows differently, and a job created while the paging runs pushes every row behind it one slot along. Either can put one job in two pages and another in none. The node de-duplicates on job ID across pages, so you never get the same job twice; a job that slipped the other way, out of the window between two requests, is not recoverable from here and will be missing. Set **Created Before** under **Filters** to the moment the run starts when the list has to be exact — that freezes the set against anything submitted while it walks.
 - **Cancel**: stop a job that has not finished yet.
   - Cancel returns the job itself with `status: "cancelled"`, not `{ deleted: true }`. Cancelling is not a delete: the job stays fetchable, keeps its cost and timings, and is removed only when its retention window passes.
+
+#### Resource: Account
+
+- **Get**: read the credit balance, the plan limits and the spend so far this period.
+  - This is what **Balance Low** and **Balance Depleted** on the trigger could not tell you by themselves. A workflow woken by one can now ask how low, and any workflow can check the balance before submitting something expensive.
+  - The item is `GET /billing/state` as it stands: `balance.amount` in dollars, `plan` with its `slug`, `name`, `price` and the four limits a submission is measured against (`concurrentJobs`, `apiRequestsPerMinute`, `maxJobTimeout` in seconds, `maxInputFileSize` in bytes), `subscription` or `null`, `usage.currentPeriodSpend` in dollars with `usage.jobCount`, `isPro`, `creditBonusRate`, and `upgradePlan` or `null` when there is no plan above this one.
+  - **There is no Output parameter on this resource.** Seven top-level fields, none of them describing how Rendobar is built, is not a payload with anything to trim. The three-mode selector exists because a raw job carries around 33 fields and a raw file 21.
+  - **There is no Usage operation, on purpose.** `GET /billing/usage` carries no balance at all, so it does not answer the question the balance events raise. What it does carry is a per-job-type map and one row per date and job type, growing with the account's history. That is a chart rather than something a workflow branches on, and `usage.currentPeriodSpend` above is already the spend figure worth acting on. **Custom API Call** reaches it for anyone who wants the breakdown.
 
 #### Resource: File
 
@@ -60,17 +77,19 @@ Operations are grouped by resource.
 
 #### Anything else in the API
 
-The node models jobs and files. For the rest of the API — billing state, job logs, share links, webhook deliveries — pick **Custom API Call**, which n8n adds to the **Resource** and **Operation** dropdowns by itself because the Rendobar credential carries its own authentication. Choosing it points you at the HTTP Request node with the credential already applied, so you can call any endpoint without handling a key. That is why this package ships no Custom API Call operation of its own: a hand-written one would be a second and worse route to the same place.
+The node models jobs, files and the account. Everything else the API exposes (usage breakdowns, share links, webhook deliveries, team and organization management) is reached with **Custom API Call**, which n8n adds to the **Resource** and **Operation** dropdowns by itself because the Rendobar credential carries its own authentication. Choosing it points you at the HTTP Request node with the credential already applied, so you can call any endpoint without handling a key. That is why this package ships no Custom API Call operation of its own: a hand-written one would be a second and worse route to the same place.
 
 #### Output
 
-Both resources take an **Output** parameter, because a raw job carries around 33 top-level fields and a raw uploaded file carries 21.
+The **Job** and **File** resources take an **Output** parameter, because a raw job carries around 33 top-level fields and a raw uploaded file carries 21.
 
 - **Simplified** (default): the fields workflows branch on. This is what most workflows and every AI agent should use.
   - Job: `id`, `type`, `status`, `cost`, `createdAt`, `completedAt`, plus either the result (`data`, `file`, `files`, `expiresAt`) or, for a job that stopped, `error`. Never more than ten fields on one item.
   - File: `id`, `url`, `filename`, `contentType`, `mediaType`, `sizeBytes`, `status`, `expiresAt`, `createdAt`.
 - **Raw**: every field the API returns.
 - **Selected Fields**: only the fields you pick. The ID is always included, whether or not you picked it, so an agent can come back for the rest of the record later.
+
+Neither **Get Logs** nor the **Account** resource takes one. **Get Logs** emits log entries rather than a job, so both the projection and the field list beneath it would describe the wrong record, and the parameter is hidden on that operation. The Account item carries seven top-level fields, which is not a payload with anything to trim.
 
 ### Job result (the same shape for every job type)
 
@@ -85,7 +104,9 @@ Set **Output** to **Raw** when you also need `output`, `steps`, `region`, timing
 
 ### Rendobar Trigger
 
-Starts a workflow when a Rendobar event fires. Select the events to listen for (job completed, failed, cancelled, created, started, and balance events). On activation the node registers its webhook URL with Rendobar and removes it on deactivation.
+Starts a workflow when a Rendobar media job completes, stops or is cancelled, or when the account balance runs low. Select the events to listen for: **Job Created**, **Job Started**, **Job Completed**, **Job Failed**, **Job Cancelled**, **Balance Low** and **Balance Depleted**. On activation the node registers its webhook URL with Rendobar and removes it on deactivation.
+
+Pair **Job Failed** with **Job > Get Logs** to see what the runner reported, and **Balance Low** with **Account > Get** to find out how low.
 
 > Rendobar must be able to reach the webhook URL over HTTPS. This works on n8n Cloud or a tunnelled / publicly hosted instance. A plain `localhost` n8n is not reachable from the API, so use `n8n start --tunnel` to test locally.
 
@@ -445,6 +466,63 @@ It also shows **Parameters (JSON)**: `image.generate` offers a choice of paramet
 
 The Get node re-fetches over your authenticated connection, so the download link is fresh and the payload that arrived never has to be trusted.
 
+### 5. React when a job stops, and read what the runner reported
+
+**Job Failed** on the trigger and **Job > Get Logs** are the pair this exists for. The item that arrives carries `jobId`, `status` and `logs`, so a Slack or an email node can post the log straight from `{{ $json.logs.map(l => l.message).join('
+') }}`.
+
+A job that stopped before a runner ever saw it has no logs to give, and that arrives as `logs: []` rather than stopping the workflow. Branch on `{{ $json.logs.length }}` when you want to tell the two apart, and read `error` from a **Get** on the same job for the reason a job with no logs stopped.
+
+```json
+{
+	"name": "Rendobar: read the logs of a job that stopped",
+	"nodes": [
+		{
+			"parameters": {
+				"events": ["job.failed"]
+			},
+			"id": "2f7c1a05-8e34-4b19-9d6a-4c0e7b3f1a28",
+			"name": "Rendobar Trigger",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobarTrigger",
+			"typeVersion": 1,
+			"position": [0, 0],
+			"webhookId": "6c5e9a13-2d78-4f40-b1c9-8e3a7d0f6b41"
+		},
+		{
+			"parameters": {
+				"resource": "job",
+				"operation": "getLogs",
+				"jobId": {
+					"__rl": true,
+					"mode": "id",
+					"value": "={{ $json.data.jobId }}"
+				}
+			},
+			"id": "b41d8e70-5a92-4c3f-8e17-0d6b2a9f5c34",
+			"name": "Get logs",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobar",
+			"typeVersion": 1,
+			"position": [220, 0]
+		}
+	],
+	"connections": {
+		"Rendobar Trigger": {
+			"main": [[{ "node": "Get logs", "type": "main", "index": 0 }]]
+		}
+	}
+}
+```
+
+### 6. Check the balance before spending it
+
+**Balance Low** and **Balance Depleted** on the trigger say that something has happened, and **Account > Get** is what says how much. The same operation in front of a submission is a pre-flight: read it, compare `balance.amount` against what the job will cost, and route around it rather than collecting an `INSUFFICIENT_CREDITS` stop.
+
+1. **Rendobar Trigger** with **Balance Low** selected, or any trigger of your own.
+2. **Rendobar**, Resource **Account**, Operation **Get**.
+3. An **If** node on `{{ $json.balance.amount < 5 }}`, into whatever you want told.
+
+`plan.limits` on the same item is what a submission is measured against, so `maxInputFileSize` and `maxJobTimeout` are there too when the check is about size or length rather than money.
+
 ## Compatibility
 
 Tested against n8n's current community-node API (`n8nNodesApiVersion: 1`).
@@ -459,7 +537,10 @@ Tested against n8n's current community-node API (`n8nNodesApiVersion: 1`).
 - **A parked execution has to be released by hand.** Open it under **Executions**, and stop it. Then set the Wait node's **Limit Wait Time** so the next one releases itself.
 - **The Parameters panel is empty.** `compose`, `image.generate` and `image.edit` describe their parameters as a choice between shapes, which the generated form cannot render. Set **Specify Parameters** to **Using JSON** and write them in **Parameters (JSON)**; the panel says so too.
 - **A number parameter is not on the form.** Optional numbers the job type gives no default for start under **Add parameter to send**. n8n puts a `0` into an empty number box as soon as it draws one and then sends that `0` as though you had chosen it, which Rendobar refuses for `Timeout` and accepts for `Seed` — so the box is offered rather than drawn. Add the parameter and it behaves like any other; leave it alone and Rendobar applies its own default. A node saved before this changed keeps its `0` on the form: remove the parameter with the bin icon beside it, or pick the job type again.
-- **A field you need is missing from the item.** Set **Output** to **Raw**, or to **Selected Fields** and pick it.
+- **A field you need is missing from the item.** Set **Output** to **Raw**, or to **Selected Fields** and pick it. **Get Logs** and **Account > Get** have no **Output** parameter, so their items are never narrowed.
+- **Download Output says the job has no output file.** One of three things. The job has not finished, so wait for it or use **Get** and read `status`. The job type computes data rather than a file, in which case the result is under `data` on a **Get** and there was never a file to fetch. Or the retention window has passed and the files are gone, which means submitting the job again. The stop is marked retryable only in the first case.
+- **Get Logs came back with an empty list.** Logs exist once a runner has reported them. A job still waiting or running has none yet, a job that never reached a runner never will, and a job whose retention window has passed had its logs swept with its files. `status` on the same item tells the first apart from the rest. This is deliberately not a stop: reacting to **Job Failed** and asking for the logs is what the operation is for, and a job that stopped before a runner saw it is exactly the job that has none.
+- **A job ID that does not exist reports that, rather than reading as an empty log.** The node reads the job before the logs for this reason, because the API answers 404 to both and only the sentence differs.
 - **A job stopped and you want to know why.** With the default **Simplified** output, a stopped job carries `error.code`, `error.message`, `error.detail`, `error.retryable` and `error.failedPhase`.
 - **The Job list is empty.** It shows your recent jobs from `GET /jobs`. A brand new account has none yet — switch the locator to **By ID** or **By URL**.
 - **A Return All came back short.** Paging is by offset over an ordering with no tiebreaker, so a job submitted while it runs can shift a row out of the window before it is read. Set **Created Before** under **Filters** to freeze the set, then run it again.

@@ -100,7 +100,12 @@ export class RendobarTrigger implements INodeType {
 		group: ['trigger'],
 		version: 1,
 		subtitle: '={{$parameter["events"].join(", ")}}',
-		description: 'Starts the workflow when a Rendobar event fires',
+		// n8n's node details panel takes its headline from the trigger, so this
+		// line stands for the whole package. "when a Rendobar event fires" told a
+		// reader nothing about what the events are, and left five actions reading
+		// as an afterthought behind a node that only listens.
+		description:
+			'Starts the workflow when a Rendobar media job completes, stops or is cancelled, or when the account balance runs low',
 		defaults: { name: 'Rendobar Trigger' },
 		inputs: [],
 		outputs: [NodeConnectionTypes.Main],

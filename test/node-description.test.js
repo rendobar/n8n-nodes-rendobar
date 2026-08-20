@@ -116,7 +116,14 @@ test('the Job resource offers Get Many alongside Create, Get and Cancel', () => 
 		operation.displayOptions.show.resource.includes('job'),
 	);
 	const values = job.options.map((option) => option.value);
-	assert.deepEqual(values.sort(), ['cancel', 'create', 'get', 'getAll']);
+	assert.deepEqual(values.sort(), [
+		'cancel',
+		'create',
+		'download',
+		'get',
+		'getAll',
+		'getLogs',
+	]);
 
 	const getMany = job.options.find((option) => option.value === 'getAll');
 	assert.equal(getMany.name, 'Get Many');
@@ -125,6 +132,92 @@ test('the Job resource offers Get Many alongside Create, Get and Cancel', () => 
 		!/\ball\b/i.test(getMany.description),
 		'Get Many description must say "many", not "all"',
 	);
+});
+
+test('operation values are unique across every resource', () => {
+	// execute() dispatches on `operation` alone, so a value reused by two
+	// resources would send one of them into the other's branch. This is what
+	// keeps workflows saved before the Resource selector existed running, and it
+	// is why the Account resource's Get is valued `getAccount`.
+	const seen = new Map();
+	for (const operation of operations) {
+		const resources = operation.displayOptions.show.resource.join('/');
+		for (const option of operation.options) {
+			assert.equal(
+				seen.has(option.value),
+				false,
+				`operation "${option.value}" is offered by both ${seen.get(option.value)} and ${resources}`,
+			);
+			seen.set(option.value, resources);
+		}
+	}
+	assert.ok(seen.has('getAccount'));
+	assert.ok(seen.has('get'));
+});
+
+test('the Account resource offers a single Get, and the panel groups it', () => {
+	// Two triggers fire on balance.depleted and balance.low; without this
+	// nothing in the package can read the balance those events talk about.
+	const resource = properties.find((property) => property.name === 'resource');
+	assert.ok(
+		resource.options.some((option) => option.value === 'account'),
+		'no Account resource',
+	);
+
+	const account = operations.find((operation) =>
+		operation.displayOptions.show.resource.includes('account'),
+	);
+	assert.ok(account, 'the Account resource has no Operation dropdown');
+	assert.deepEqual(
+		account.options.map((option) => option.value),
+		['getAccount'],
+	);
+	assert.equal(account.default, 'getAccount');
+	assert.equal(account.options[0].name, 'Get');
+	assert.equal(account.options[0].action, 'Get account');
+});
+
+test('Download Output and Get Logs both take the Job locator', () => {
+	const job = properties.find((property) => property.name === 'jobId');
+	for (const operation of ['get', 'cancel', 'download', 'getLogs']) {
+		assert.ok(
+			job.displayOptions.show.operation.includes(operation),
+			`the Job locator is not shown for ${operation}`,
+		);
+	}
+});
+
+test('Download Output names its own binary field, shown only for that operation', () => {
+	// `displayOptions.show` ANDs its keys, so the Get field's rule (operation get
+	// AND the switch on) cannot be widened to cover Download Output without
+	// leaving a dead field on the Get panel.
+	const fields = properties.filter((property) => property.name.endsWith('BinaryProperty'));
+	assert.deepEqual(
+		fields.map((property) => property.name).sort(),
+		['downloadBinaryProperty', 'outputBinaryProperty'],
+	);
+
+	const download = fields.find((property) => property.name === 'downloadBinaryProperty');
+	assert.deepEqual(download.displayOptions.show.operation, ['download']);
+	assert.equal(download.displayOptions.show.downloadOutput, undefined);
+	assert.equal(download.default, 'data');
+
+	const onGet = fields.find((property) => property.name === 'outputBinaryProperty');
+	assert.deepEqual(onGet.displayOptions.show.operation, ['get']);
+	assert.deepEqual(onGet.displayOptions.show.downloadOutput, [true]);
+});
+
+test('Get Logs is not offered the job Output projection', () => {
+	// The item Get Logs emits is a log entry, not a job, so both the three-mode
+	// Output and the job field list beneath it would describe the wrong record.
+	for (const name of ['output', 'outputFields']) {
+		const property = properties.find((entry) => entry.name === name);
+		assert.deepEqual(
+			property.displayOptions.hide?.operation,
+			['getLogs'],
+			`${name} is still shown on Get Logs`,
+		);
+	}
 });
 
 test("Get Many uses n8n's Return All and Limit copy", () => {
@@ -348,7 +441,7 @@ test('the asset field list spells its acronyms the way n8n does', () => {
 	assert.ok(names.includes('ETag'));
 	assert.ok(names.includes('ID'));
 	for (const name of names) {
-		assert.ok(!/Url/.test(name) && !/Id/.test(name), `${name} is miscased`);
+		assert.ok(!/\bUrl\b/.test(name) && !/\bId\b/.test(name), `${name} is miscased`);
 	}
 });
 

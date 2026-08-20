@@ -29,6 +29,7 @@ import {
 } from './shared/failure';
 import {
 	arrayAt,
+	booleanAt,
 	isJsonObject,
 	numberAt,
 	objectAt,
@@ -495,6 +496,86 @@ async function waitForJob(
 
 // ── Downloading ───────────────────────────────────────────────────────────
 
+/**
+ * The headline output file of a job, when it produced one.
+ *
+ * `file` comes straight from the API's unified output contract, so it is either
+ * a file or null. It is read off the job rather than off the item, which may
+ * have been narrowed by Output. Read in two places — the optional download on
+ * Get, and the Download Output operation, which has to refuse when there is no
+ * file rather than hand back an item with nothing on it.
+ */
+export function headlineOutputFile(job: JsonObject): JsonObject | undefined {
+	const file = objectAt(objectAt(job, 'output'), 'file');
+	return stringAt(file, 'url') === undefined ? undefined : file;
+}
+
+/**
+ * The stop for a Download Output that has nothing to download.
+ *
+ * `retryable` follows the job's status rather than being fixed: a job still on
+ * its way to a result may well have a file on the next pass, while a job that
+ * computes data rather than a file never will, however many times it is asked.
+ */
+export function noOutputFile(
+	node: INode,
+	job: JsonObject,
+	jobId: string,
+	itemIndex: number,
+): Error {
+	const status = stringAt(job, 'status');
+	const message = withItemMarker(`Job ${jobId} has no output file to download`, itemIndex);
+	// The status is deliberately not quoted into this line. Rendobar's own word
+	// for a stopped job is one the n8n copy guidelines rule out of a message, and
+	// the three reasons below cover every state anyway. The Get operation shows
+	// which one applies.
+	const description =
+		"A file is on a job once it has completed and produced one. A job still on its way to a result has none yet. A job type that computes data rather than a file, such as ffprobe, never produces one at all and puts its result under 'data' instead. And a job whose retention window has passed has had its files removed. Run the Get operation on the same job to see which of those this is.";
+
+	return rememberFailure(new NodeOperationError(node, message, { itemIndex, description }), {
+		message,
+		description,
+		code: 'NO_OUTPUT_FILE',
+		retryable: status === undefined || !TERMINAL_STATUSES.has(status),
+		jobId,
+	});
+}
+
+/**
+ * The execution log a job left behind, or an empty list when it left none.
+ *
+ * `GET /jobs/:id/logs` answers 404 for a job with no logs, which is not a stop:
+ * a job that never reached a runner reported nothing, and a job whose retention
+ * window has passed had its logs swept along with its files while the flag on
+ * the job stayed set. Both are "there are none", and an empty list says so
+ * without ending the workflow at exactly the point someone is trying to find
+ * out why a job stopped. A 404 naming the job itself cannot arrive here — the
+ * caller has already read the job, so the job exists.
+ */
+export async function readJobLogs(
+	this: IExecuteFunctions,
+	jobId: string,
+	itemIndex: number,
+): Promise<JsonValue[]> {
+	const response = await rendobarRequest.call(this, {
+		method: 'GET',
+		path: `/jobs/${encodeURIComponent(jobId)}/logs`,
+		idempotent: true,
+	});
+
+	if (response.statusCode >= 200 && response.statusCode < 300) {
+		return arrayAt(response.body, 'data') ?? [];
+	}
+	if (response.statusCode === 404) return [];
+
+	throw apiError(
+		this.getNode(),
+		failureFromResponse(response.statusCode, response.body, jobId),
+		response.body,
+		itemIndex,
+	);
+}
+
 /** Streams the headline output file onto the item, without buffering it. */
 async function attachOutputFile(
 	this: IExecuteFunctions,
@@ -503,10 +584,7 @@ async function attachOutputFile(
 	binaryProperty: string,
 	itemIndex: number,
 ): Promise<void> {
-	// `file` comes straight from the API's unified output contract, so it is
-	// either a file or null. It is read off the job rather than the item, which
-	// may have been narrowed by Output.
-	const file = objectAt(objectAt(job, 'output'), 'file');
+	const file = headlineOutputFile(job);
 	const url = stringAt(file, 'url');
 	if (url === undefined) return;
 
@@ -568,7 +646,8 @@ export class Rendobar implements INodeType {
 		group: ['transform'],
 		version: 1,
 		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
-		description: 'Submit, fetch, and cancel Rendobar media processing jobs',
+		description:
+			'Submit, track and cancel Rendobar media processing jobs, fetch their output and logs, and read the account balance',
 		defaults: { name: 'Rendobar' },
 		usableAsTool: true,
 		inputs: [NodeConnectionTypes.Main],
@@ -581,6 +660,10 @@ export class Rendobar implements INodeType {
 				type: 'options',
 				noDataExpression: true,
 				options: [
+					{
+						name: 'Account',
+						value: 'account',
+					},
 					{
 						name: 'File',
 						value: 'file',
@@ -612,10 +695,22 @@ export class Rendobar implements INodeType {
 						description: 'Submit a new media processing job',
 					},
 					{
+						name: 'Download Output',
+						value: 'download',
+						action: 'Download job output',
+						description: 'Fetch the file a finished job produced onto the item',
+					},
+					{
 						name: 'Get',
 						value: 'get',
 						action: 'Get job',
 						description: 'Retrieve a job with its status and result',
+					},
+					{
+						name: 'Get Logs',
+						value: 'getLogs',
+						action: 'Get job logs',
+						description: 'Retrieve what the runner recorded while the job ran',
 					},
 					{
 						name: 'Get Many',
@@ -641,6 +736,26 @@ export class Rendobar implements INodeType {
 					},
 				],
 				default: 'upload',
+			},
+			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				displayOptions: { show: { resource: ['account'] } },
+				options: [
+					{
+						// `getAccount` rather than `get`, because `execute` dispatches on
+						// the operation alone and two resources sharing a value would send
+						// one to the other's branch.
+						name: 'Get',
+						value: 'getAccount',
+						action: 'Get account',
+						description:
+							'Retrieve the credit balance, plan limits and spend so far this period',
+					},
+				],
+				default: 'getAccount',
 			},
 			{
 				displayName: 'Job Type',
@@ -828,7 +943,9 @@ export class Rendobar implements INodeType {
 				type: 'resourceLocator',
 				default: { mode: 'list', value: '' },
 				required: true,
-				displayOptions: { show: { resource: ['job'], operation: ['get', 'cancel'] } },
+				displayOptions: {
+					show: { resource: ['job'], operation: ['get', 'cancel', 'download', 'getLogs'] },
+				},
 				description: 'The job to act on',
 				modes: [
 					{
@@ -891,6 +1008,20 @@ export class Rendobar implements INodeType {
 				displayOptions: {
 					show: { resource: ['job'], operation: ['get'], downloadOutput: [true] },
 				},
+				placeholder: 'e.g. data',
+				description: 'Name of the output field to put the downloaded file in',
+			},
+			{
+				// A second parameter rather than a wider gate on the one above.
+				// `displayOptions.show` ANDs its keys, so "Get with the switch on, OR
+				// Download Output" cannot be written as one rule, and relaxing the
+				// switch out of the rule would leave a field on the Get panel that
+				// does nothing whenever the switch is off.
+				displayName: 'Output Binary Field',
+				name: 'downloadBinaryProperty',
+				type: 'string',
+				default: 'data',
+				displayOptions: { show: { resource: ['job'], operation: ['download'] } },
 				placeholder: 'e.g. data',
 				description: 'Name of the output field to put the downloaded file in',
 			},
@@ -1028,7 +1159,13 @@ export class Rendobar implements INodeType {
 				name: 'output',
 				type: 'options',
 				default: 'simplified',
-				displayOptions: { show: { resource: ['job'] } },
+				// Hidden on Get Logs: the item there is a log entry, not a job, so both
+				// this projection and the field list below would describe the wrong
+				// record. Hiding a parameter does not clear it and `getNodeParameter`
+				// still hands back whatever was stored, so the safety here is not the
+				// hiding: it is that Get Logs builds its own item and never applies
+				// either value to it.
+				displayOptions: { show: { resource: ['job'] }, hide: { operation: ['getLogs'] } },
 				description:
 					'How much of the job to put on the item. A raw job carries around 33 fields, which is more than most workflows need and more than an AI agent can usefully read.',
 				options: [
@@ -1055,7 +1192,10 @@ export class Rendobar implements INodeType {
 				name: 'outputFields',
 				type: 'multiOptions',
 				default: ['status', 'data', 'file'],
-				displayOptions: { show: { resource: ['job'], output: ['selected'] } },
+				displayOptions: {
+					show: { resource: ['job'], output: ['selected'] },
+					hide: { operation: ['getLogs'] },
+				},
 				description: 'The job fields to return. The job ID is always included.',
 				options: JOB_FIELD_OPTIONS,
 			},
@@ -1107,7 +1247,8 @@ export class Rendobar implements INodeType {
 		const items = this.getInputData();
 		// Branch on `operation` rather than `resource`: operation values are unique
 		// across resources, so workflows saved before the Resource selector existed
-		// keep executing unchanged.
+		// keep executing unchanged. That uniqueness is what `getAccount` exists for
+		// rather than a second `get`, and test/node-description.test.js pins it.
 		const operation = toIdentifier(this.getNodeParameter('operation', 0));
 		const executionId = this.getExecutionId();
 		const node = this.getNode();
@@ -1125,6 +1266,62 @@ export class Rendobar implements INodeType {
 					outputMode === 'selected'
 						? toStringList(this.getNodeParameter(fieldsParameter, i, []))
 						: [];
+
+				// Read for every operation, applied only by the ones that emit a job or
+				// an asset. Get Logs and the Account resource build their own item, so
+				// a value left behind by an earlier operation cannot reach them.
+				if (operation === 'getAccount') {
+					// One operation, and it reads state rather than usage. The asymmetry
+					// worth closing is that `balance.depleted` and `balance.low` can start
+					// a workflow which then cannot ask how low: `GET /billing/state`
+					// answers that and carries the plan limits a submission can be checked
+					// against, while `GET /billing/usage` carries no balance at all and
+					// answers a reporting question — a per-job-type map plus one row per
+					// date and job type, growing with the account's history. That is a
+					// chart rather than something a workflow branches on, and Custom API
+					// Call already reaches it.
+					const account = await rendobarApiRequest.call(
+						this,
+						{ method: 'GET', path: '/billing/state', idempotent: true },
+						i,
+					);
+					returnData.push({ json: unwrapData(account) ?? {}, pairedItem: { item: i } });
+					continue;
+				}
+
+				if (operation === 'getLogs') {
+					const jobId = requireIdentifier(node, readLocator(this, 'jobId', i), 'Job', i);
+
+					// The job is read first, and not for decoration. `GET /jobs/:id/logs`
+					// answers 404 both for a job that does not exist and for a job that has
+					// no logs, and the only thing separating them is the sentence in the
+					// body — so reading the job settles it structurally instead. A job ID
+					// nobody meant to type stops the item here, with the copy that fits; a
+					// job with nothing to show hands back an empty list, which is what
+					// someone reacting to `job.failed` needs rather than a stop.
+					const response = await rendobarApiRequest.call(
+						this,
+						{ method: 'GET', path: `/jobs/${encodeURIComponent(jobId)}`, idempotent: true },
+						i,
+					);
+					const job = unwrapData(response) ?? {};
+
+					// `logsAvailable` is the API's own flag for whether a runner ever
+					// reported any, so a definite `false` saves the second call outright.
+					// It is not trusted the other way: anything else asks, and an absent
+					// flag then costs a 404 rather than silently reporting a job's logs as
+					// empty.
+					const logs =
+						booleanAt(job, 'logsAvailable') === false
+							? []
+							: await readJobLogs.call(this, jobId, i);
+
+					returnData.push({
+						json: { jobId, status: stringAt(job, 'status') ?? null, logs },
+						pairedItem: { item: i },
+					});
+					continue;
+				}
 
 				if (operation === 'getAll') {
 					const returnAll = this.getNodeParameter('returnAll', i, false) === true;
@@ -1215,6 +1412,9 @@ export class Rendobar implements INodeType {
 				}
 
 				let job: JsonObject;
+				// Named outside the branch below so the Download Output stop can quote
+				// the job the user asked for, whatever the response turned out to hold.
+				let jobIdentifier = '';
 
 				if (operation === 'create') {
 					const jobType = requireIdentifier(
@@ -1360,6 +1560,7 @@ export class Rendobar implements INodeType {
 						'Job',
 						i,
 					);
+					jobIdentifier = jobId;
 					const path = `/jobs/${encodeURIComponent(jobId)}`;
 					const response = await rendobarApiRequest.call(
 						this,
@@ -1374,10 +1575,29 @@ export class Rendobar implements INodeType {
 
 				const item = buildJobItem(job, i, outputMode, outputFields);
 
-				// Optional: pull the headline output file onto the item so the next
-				// node can pass the produced file along. Only on Get, opt-in, and only
-				// when the finished job actually produced a file.
-				if (operation === 'get' && this.getNodeParameter('downloadOutput', i, false) === true) {
+				// Both routes to a file go through `attachOutputFile`, which streams the
+				// response into n8n's binary store and closes it when the link answers a
+				// non-2xx. What separates them is what a missing file means.
+				//
+				// On Get the file is an extra, so a job that produced none simply arrives
+				// without one. On Download Output the file IS the operation, so the same
+				// silence would hand back an item that looks like a download and carries
+				// nothing.
+				if (operation === 'download') {
+					if (headlineOutputFile(job) === undefined) {
+						throw noOutputFile(node, job, stringAt(job, 'id') ?? jobIdentifier, i);
+					}
+					await attachOutputFile.call(
+						this,
+						item,
+						job,
+						toIdentifier(this.getNodeParameter('downloadBinaryProperty', i, 'data')) || 'data',
+						i,
+					);
+				} else if (
+					operation === 'get' &&
+					this.getNodeParameter('downloadOutput', i, false) === true
+				) {
 					await attachOutputFile.call(
 						this,
 						item,

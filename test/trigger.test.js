@@ -115,6 +115,25 @@ test('a drifted registration is reported so it can be corrected', () => {
 	);
 });
 
+test('the trigger description says what it fires on', () => {
+	// n8n's node details panel takes its headline from the trigger, so this one
+	// line stands for the whole package. A generic "when a Rendobar event fires"
+	// leaves a reader knowing nothing about the events and reads as a package
+	// that only listens.
+	const { description } = new RendobarTrigger().description;
+
+	assert.notEqual(description, 'Starts the workflow when a Rendobar event fires');
+	assert.match(description, /^Starts the workflow when /);
+
+	// Both event families the node offers have to be recognisable in it, or the
+	// headline is specific about half the surface and silent about the other.
+	assert.match(description, /\bjob\b/i, 'the job events are not named');
+	assert.match(description, /\bbalance\b/i, 'the balance events are not named');
+
+	// The writing rules this repo follows: no em-dash, no semicolons in prose.
+	assert.equal(/[—;]/.test(description), false, `"${description}" uses banned punctuation`);
+});
+
 test('the trigger deliberately does not advertise itself as an AI tool', () => {
 	// A trigger cannot be invoked by an agent, and n8n's type only allows `true`,
 	// so the only way to say no is to leave the flag off.
