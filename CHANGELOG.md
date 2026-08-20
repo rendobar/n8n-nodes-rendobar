@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.3.2 - 2026-08-20
+
+### Added
+
+- **The nodes can be found by what they do.** Neither codex declared an `alias`, which is the field n8n's node search reads, so the only term that surfaced these nodes was the brand name: searching `ffmpeg`, `compose`, `upscale`, `caption`, `transcode` or `AI` returned nothing at all. The action node now carries terms for every live job type and the trigger carries its own. Draft lanes are deliberately absent, because answering a search for something the API will refuse is worse than not appearing.
+
 ## 0.3.1 - 2026-08-20
 
 ### Fixed
