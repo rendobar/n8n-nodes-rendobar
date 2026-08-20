@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-08-20
+
 ### Added
 
 - **An `Account` resource with a `Get` operation, because nothing in the package could read the balance the trigger fires on.** Two of the seven trigger events are `balance.low` and `balance.depleted`, so a workflow could be woken by "the balance is low" and had no way to ask how low, and nothing could check what was left before submitting something expensive. `Account > Get` returns `GET /billing/state` as it stands: `balance.amount` in dollars, the plan with the four limits a submission is measured against, the subscription, the spend and job count so far this period, and the upgrade plan when there is one. It is one operation rather than two. `GET /billing/usage` exists and is deliberately not modelled: it carries no balance at all, so it does not answer the question the balance events raise, and what it does carry is a per-job-type map plus one row per date and job type, growing with the account's history. That is a chart rather than something a workflow branches on, and `usage.currentPeriodSpend` is already the spend figure worth acting on. **Custom API Call** reaches the breakdown for anyone who wants it. The resource takes no `Output` parameter either: seven top-level fields, none of them describing how Rendobar is built, is not a payload with anything to trim, and the three-mode selector exists because a raw job carries around 33 fields and a raw file 21. The operation is valued `getAccount` rather than `get` because `execute()` dispatches on the operation alone, which is what keeps workflows saved before the Resource selector existed running. A test now pins that uniqueness so the next resource cannot quietly break the dispatch.
