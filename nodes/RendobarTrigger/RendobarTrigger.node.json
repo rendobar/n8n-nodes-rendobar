@@ -16,7 +16,11 @@
 		"job",
 		"webhook",
 		"complete",
-		"callback"
+		"callback",
+		"balance",
+		"credits",
+		"failed",
+		"cancelled"
 	],
 	"resources": {
 		"credentialDocumentation": [

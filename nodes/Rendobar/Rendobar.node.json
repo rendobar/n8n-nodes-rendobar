@@ -46,7 +46,12 @@
 		"enhance",
 		"probe",
 		"metadata",
-		"thumbnail"
+		"thumbnail",
+		"download",
+		"logs",
+		"balance",
+		"credits",
+		"account"
 	],
 	"resources": {
 		"credentialDocumentation": [
