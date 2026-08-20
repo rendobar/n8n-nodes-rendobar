@@ -10,6 +10,7 @@ n8n community node for [Rendobar](https://rendobar.com), a media processing API.
 - [Credentials](#credentials)
 - [Nodes](#nodes)
 - [Job result](#job-result-the-same-shape-for-every-job-type)
+- [Using it as an AI agent tool](#using-it-as-an-ai-agent-tool)
 - [Long jobs](#long-jobs-a-callback-and-a-wait-node)
 - [When something goes wrong](#when-something-goes-wrong)
 - [Example workflows](#example-workflows)
@@ -87,6 +88,34 @@ Set **Output** to **Raw** when you also need `output`, `steps`, `region`, timing
 Starts a workflow when a Rendobar event fires. Select the events to listen for (job completed, failed, cancelled, created, started, and balance events). On activation the node registers its webhook URL with Rendobar and removes it on deactivation.
 
 > Rendobar must be able to reach the webhook URL over HTTPS. This works on n8n Cloud or a tunnelled / publicly hosted instance. A plain `localhost` n8n is not reachable from the API, so use `n8n start --tunnel` to test locally.
+
+## Using it as an AI agent tool
+
+The action node is available to an AI Agent, so an agent can submit and track media
+jobs on its own. Connect it to the agent's **Tool** port and the agent chooses the
+job type and the parameters.
+
+Two things make this work in practice.
+
+**The agent sees your current capabilities, not a snapshot.** The job type list comes
+from `GET /jobs/types` on your account and each type's parameters come from its
+schema, both read at the moment the agent looks. A job type added to Rendobar after
+this node was published is available to the agent with no upgrade.
+
+**Keep the output small.** Set **Output** to `Simplified`, the default, which returns
+ten fields. A raw job carries around thirty-three, most of them irrelevant to a
+decision and all of them consuming the agent's context. Use `Selected Fields` if you
+want fewer still. The job ID is always included, so the agent can follow up with
+**Get**.
+
+A worked example: give an agent this node and ask it to report the resolution and
+duration of a video. It submits an `ffprobe` job with the file URL, waits for the
+result, and reads the answer out of `data`. Nothing about the request is written into
+the node in advance.
+
+Each tool call is submitted under its own idempotency key, so an agent making several
+calls in one conversation gets a separate job for each. See
+[Retrying a submission](#retrying-a-submission).
 
 ## Long jobs: a callback and a Wait node
 
