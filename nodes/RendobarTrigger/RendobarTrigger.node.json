@@ -2,7 +2,22 @@
 	"node": "@rendobar/n8n-nodes-rendobar.rendobarTrigger",
 	"nodeVersion": "1.0",
 	"codexVersion": "1.0",
-	"categories": ["Marketing", "Development", "Utility"],
+	"categories": [
+		"Marketing",
+		"Development",
+		"Utility"
+	],
+	"alias": [
+		"FFmpeg",
+		"video",
+		"media",
+		"render",
+		"transcode",
+		"job",
+		"webhook",
+		"complete",
+		"callback"
+	],
 	"resources": {
 		"credentialDocumentation": [
 			{
