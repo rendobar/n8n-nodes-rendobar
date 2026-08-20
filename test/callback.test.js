@@ -137,21 +137,34 @@ const { Rendobar } = require('../dist/nodes/Rendobar/Rendobar.node.js');
 
 const properties = new Rendobar().description.properties;
 const byName = (name) => properties.find((property) => property.name === name);
+// The Create options moved into an 'Options' collection in 0.5.0, so a lookup
+// by name has to descend into it. Kept as one helper rather than repeated
+// inline so a future move updates one place.
+const collectionChildren = (name) => {
+	const collection = properties.find((property) => property.type === 'collection' && property.name === name);
+	return collection ? collection.options : [];
+};
+const createOption = (name) => collectionChildren('options').find((option) => option.name === name);
+
 
 test('Create takes a callback address, on the Job resource only', () => {
-	const url = byName('callbackUrl');
+	const url = createOption('callbackUrl');
 	assert.ok(url, 'no Callback URL parameter');
 	assert.equal(url.type, 'string');
 	assert.equal(url.default, '', 'sending no callback has to be the default');
-	assert.deepEqual(url.displayOptions.show.operation, ['create']);
-	assert.deepEqual(url.displayOptions.show.resource, ['job']);
+	// The Job/Create gate moved onto the collection in 0.5.0. Repeating it on a
+	// child would be dead weight at best and, if the two ever disagreed, a field
+	// that never renders.
+	const optionsCollection = properties.find((property) => property.name === 'options');
+	assert.deepEqual(optionsCollection.displayOptions.show.operation, ['create']);
+	assert.deepEqual(optionsCollection.displayOptions.show.resource, ['job']);
 	// The whole point is the Wait node pairing, so the example has to be it.
 	assert.match(url.placeholder, /\$execution\.resumeUrl/);
 	assert.match(url.description, /Wait node/);
 });
 
 test('the callback hint names the two Wait node settings the recipe needs', () => {
-	const { hint } = byName('callbackUrl');
+	const { hint } = createOption('callbackUrl');
 	// The Wait node's resume webhook answers GET by default and Rendobar posts,
 	// and a method mismatch is answered with a 404 that names nothing. It is the
 	// one setting that decides whether any of this works.
@@ -168,7 +181,7 @@ test('no copy promises a delivery the retry window cannot keep', () => {
 	// Wording that reads as a guarantee is exactly what stops a user setting the
 	// Wait node's own limit, which is the only thing that releases a parked
 	// execution once the window has closed.
-	const callbackUrl = byName('callbackUrl');
+	const callbackUrl = createOption('callbackUrl');
 	const overclaim = /\bnever\b|\balways\b|\bguarantee/i;
 
 	for (const copy of [callbackUrl.description, callbackUrl.hint]) {
@@ -207,7 +220,7 @@ test('a workflow that already sets both still shows both parameters', () => {
 	// reading a panel that no longer matches what they saved, and a stored value
 	// behind a hidden field is read differently across n8n versions.
 	for (const name of ['waitForCompletion', 'callbackUrl']) {
-		const property = byName(name);
+		const property = createOption(name);
 		const gates = { ...property.displayOptions?.show, ...property.displayOptions?.hide };
 		assert.ok(
 			!('callbackUrl' in gates) && !('waitForCompletion' in gates),
@@ -219,16 +232,26 @@ test('a workflow that already sets both still shows both parameters', () => {
 test('both descriptions warn about the pairing before it is built', () => {
 	// The run-time refusal is the backstop. This copy is what stops the workflow
 	// being built that way in the first place.
-	assert.match(byName('waitForCompletion').description, /Callback URL/);
-	assert.match(byName('callbackUrl').description, /Wait for Completion/);
+	assert.match(createOption('waitForCompletion').description, /Callback URL/);
+	assert.match(createOption('callbackUrl').description, /Wait for Completion/);
 });
 
-test('Callback Headers appear only once an address has been given', () => {
-	const headerParam = byName('callbackHeaders');
+test('Callback Headers are opt-in and never appear unbidden', () => {
+	// Until 0.5.0 this was gated with `hide: { callbackUrl: [''] }`, so the field
+	// only appeared once an address was typed. Inside the Options collection that
+	// gate is redundant and worse than redundant: a child never renders until the
+	// user picks it from 'Add Option', and a sibling reference from inside a
+	// collection is not something every n8n version resolves the same way. The
+	// clutter the gate existed to prevent is what the collection already fixes.
+	const headerParam = createOption('callbackHeaders');
 	assert.ok(headerParam, 'no Callback Headers parameter');
 	assert.equal(headerParam.type, 'fixedCollection');
 	assert.equal(headerParam.typeOptions.multipleValues, true);
-	assert.deepEqual(headerParam.displayOptions.hide.callbackUrl, ['']);
+	assert.equal(
+		headerParam.displayOptions,
+		undefined,
+		'a sibling-gated child inside a collection is the case that silently never renders',
+	);
 
 	const [group] = headerParam.options;
 	assert.equal(group.name, 'header', 'the reader expects rows under `header`');
@@ -240,10 +263,34 @@ test('Callback Headers appear only once an address has been given', () => {
 	assert.equal(group.values[1].typeOptions.password, true);
 });
 
-test('the callback parameters sit after the polling ones', () => {
-	// Polling is the short-job answer and stays first; the callback is what a
-	// long job needs, and reads as the alternative below it.
-	const order = properties.map((property) => property.name);
-	assert.ok(order.indexOf('callbackUrl') > order.indexOf('maxWait'));
-	assert.ok(order.indexOf('callbackHeaders') > order.indexOf('callbackUrl'));
+test('the delivery controls live together under Options, alphabetised', () => {
+	// They used to be ordered by intent: polling first as the short-job answer,
+	// the callback below it as the long-job alternative. Inside a collection that
+	// choice is not ours. n8n lints collection children into alphabetical order
+	// (node-param-collection-type-unsorted-items) because the user meets them as
+	// a dropdown, not as a column, so intent-ordering has nothing to convey.
+	//
+	// What still has to hold is that all six are in one place and none escaped.
+	const names = collectionChildren('options').map((option) => option.name);
+
+	assert.deepEqual(
+		[...names].sort(),
+		['callbackHeaders', 'callbackUrl', 'idempotencyKey', 'maxWait', 'pollInterval', 'waitForCompletion'],
+		'a Create option is missing from the collection or an extra one arrived',
+	);
+	assert.deepEqual(
+		collectionChildren('options').map((option) => option.displayName),
+		[...collectionChildren('options').map((option) => option.displayName)].sort(),
+		'n8n requires collection children in alphabetical order by display name',
+	);
+});
+
+test('nothing that moved into Options is still declared at the top level', () => {
+	// A parameter declared in both places is read from whichever n8n resolves
+	// first, which is the kind of thing that works in testing and diverges in a
+	// real workflow.
+	const top = properties.map((property) => property.name);
+	for (const moved of ['waitForCompletion', 'pollInterval', 'maxWait', 'callbackUrl', 'callbackHeaders', 'idempotencyKey']) {
+		assert.ok(!top.includes(moved), `${moved} is declared at the top level and inside Options`);
+	}
 });

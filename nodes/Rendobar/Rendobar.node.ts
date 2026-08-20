@@ -360,6 +360,39 @@ export function readLocator(context: IExecuteFunctions, name: string, itemIndex:
 	return context.getNodeParameter(name, itemIndex, '', { extractValue: true });
 }
 
+/**
+ * Reads a Create parameter that moved into the 'Options' collection in 0.5.0.
+ *
+ * Wait for Completion, Poll Interval, Max Wait, Callback URL, Callback Headers
+ * and Idempotency Key used to sit at the top of the panel. Moving them into a
+ * collection changes WHERE n8n stores them: a workflow saved on 0.3.0 or 0.4.0
+ * has `maxWait` at the top level, a workflow built on 0.5.0 has it under
+ * `options`. Both have to keep working, so this reads the new location first
+ * and falls back to the old one.
+ *
+ * Absence in the collection is the signal to fall back, and it is reliable: a
+ * collection only stores the keys the user actually added, so a key that is
+ * there was set deliberately. That also makes the precedence right for a
+ * half-migrated workflow, where the user has added one option and left the rest
+ * where they were.
+ *
+ * The fallback works even though the old parameters are no longer declared,
+ * because `getNodeParameter` resolves against the saved workflow rather than
+ * against this description.
+ */
+export function readCreateOption<T>(
+	context: IExecuteFunctions,
+	name: string,
+	itemIndex: number,
+	fallback: T,
+): T | unknown {
+	const options = context.getNodeParameter('options', itemIndex, {});
+	if (typeof options === 'object' && options !== null && !Array.isArray(options) && name in options) {
+		return (options as Record<string, unknown>)[name];
+	}
+	return context.getNodeParameter(name, itemIndex, fallback);
+}
+
 /** Raises the n8n error for a parameter the user has to correct. */
 function invalidParameter(
 	node: INode,
@@ -846,96 +879,97 @@ export class Rendobar implements INodeType {
 					"The settings for the chosen job type, as a JSON object. Use this for job types whose settings are a choice between shapes, such as Compose, Image Generate and Image Edit, and for anything the form cannot express. See the parameter reference at https://rendobar.com/docs.",
 			},
 			{
-				displayName: 'Wait for Completion',
-				name: 'waitForCompletion',
-				type: 'boolean',
-				default: false,
-				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
-				description:
-					"Whether to hold the execution open until the job finishes and return its result. Suits jobs of a few minutes. For anything longer use 'Callback URL' with a Wait node, which parks the execution instead of holding a worker. The two are alternatives: leave this off whenever 'Callback URL' is set, because a call that arrives while this node is polling cannot be answered.",
-			},
-			{
-				displayName: 'Poll Interval (Seconds)',
-				name: 'pollInterval',
-				type: 'number',
-				default: 5,
-				typeOptions: { minValue: 2 },
-				displayOptions: {
-					show: { resource: ['job'], operation: ['create'], waitForCompletion: [true] },
-				},
-				description: 'How often to check the job status while waiting',
-			},
-			{
-				displayName: 'Max Wait (Seconds)',
-				name: 'maxWait',
-				type: 'number',
-				default: 300,
-				typeOptions: { minValue: 5 },
-				displayOptions: {
-					show: { resource: ['job'], operation: ['create'], waitForCompletion: [true] },
-				},
-				description:
-					'How long to keep waiting. Once this passes, the item stops and reports that the job is still running.',
-			},
-			{
-				displayName: 'Callback URL',
-				name: 'callbackUrl',
-				type: 'string',
-				default: '',
-				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
-				placeholder: 'e.g. {{ $execution.resumeUrl }}',
-				description:
-					"Where Rendobar sends the finished job. Put a Wait node set to 'On Webhook Call' after this one and use its resume URL here. n8n then parks the execution instead of holding it open, so a job running for hours occupies no worker and needs no polling. Turn 'Wait for Completion' off when you use this. Leave empty to send nothing.",
-				hint: "Set the Wait node's HTTP Method to POST, which is not its default, and switch on its 'Limit Wait Time'. Rendobar posts the job on every ending, including one that stopped or was cancelled, but a call it cannot deliver is retried only five times over about five minutes — after that the parked execution has only that limit to release it.",
-			},
-			{
-				displayName: 'Callback Headers',
-				name: 'callbackHeaders',
-				type: 'fixedCollection',
-				typeOptions: { multipleValues: true },
+				displayName: 'Options',
+				name: 'options',
+				type: 'collection',
+				placeholder: 'Add Option',
 				default: {},
-				placeholder: 'Add Header',
-				displayOptions: {
-					show: { resource: ['job'], operation: ['create'] },
-					hide: { callbackUrl: [''] },
-				},
-				description:
-					"Headers to send with the callback, so the receiver can tell a genuine call apart from anything else that finds the address. On a Wait node, match these to its own Header Auth credential. Names beginning with X-Rendobar- are kept for Rendobar's own delivery details.",
-				options: [
-					{
-						displayName: 'Header',
-						name: 'header',
-						values: [
-							{
-								displayName: 'Name',
-								name: 'name',
-								type: 'string',
-								default: '',
-								placeholder: 'e.g. Authorization',
-								description: 'Name of the header to send',
-							},
-							{
-								displayName: 'Value',
-								name: 'value',
-								type: 'string',
-								typeOptions: { password: true },
-								default: '',
-								description: 'Value to send under that name',
-							},
-						],
-					},
-				],
-			},
-			{
-				displayName: 'Idempotency Key',
-				name: 'idempotencyKey',
-				type: 'string',
-				default: '',
 				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
-				placeholder: 'e.g. order-4417',
-				description:
-					'What makes this submission the same submission. Rendobar keeps one job per key, so a repeat under a key it has seen returns the original job instead of charging for a second one. Leave empty and the node builds a key from the execution, the node, the run, the item and the values being submitted, which covers a repeat inside one execution. Set it to tie the job to something of your own that outlives an execution, such as an order number, and give every distinct submission its own value.',
-				hint: 'A key is bound to one job for good. Once that job has stopped without producing anything, only a different key can submit again — so if you retry deliberately, make sure this changes, for example by ending it in {{ $runIndex }}.',
+				// No description on purpose. n8n's own collections carry none, because
+				// the placeholder and the child fields already say what this is, and a
+				// description here would be the restate-the-label filler the copy rules
+				// warn about.
+				options: [
+				{
+					displayName: 'Callback Headers',
+					name: 'callbackHeaders',
+					type: 'fixedCollection',
+					typeOptions: { multipleValues: true },
+					default: {},
+					placeholder: 'Add Header',
+					description:
+						"Headers to send with the callback, so the receiver can tell a genuine call apart from anything else that finds the address. On a Wait node, match these to its own Header Auth credential. Names beginning with X-Rendobar- are kept for Rendobar's own delivery details.",
+					options: [
+						{
+							displayName: 'Header',
+							name: 'header',
+							values: [
+								{
+									displayName: 'Name',
+									name: 'name',
+									type: 'string',
+									default: '',
+									placeholder: 'e.g. Authorization',
+									description: 'Name of the header to send',
+								},
+								{
+									displayName: 'Value',
+									name: 'value',
+									type: 'string',
+									typeOptions: { password: true },
+									default: '',
+									description: 'Value to send under that name',
+								},
+							],
+						},
+					],
+				},
+				{
+					displayName: 'Callback URL',
+					name: 'callbackUrl',
+					type: 'string',
+					default: '',
+					placeholder: 'e.g. {{ $execution.resumeUrl }}',
+					description:
+						"Where Rendobar sends the finished job. Put a Wait node set to 'On Webhook Call' after this one and use its resume URL here. n8n then parks the execution instead of holding it open, so a job running for hours occupies no worker and needs no polling. Turn 'Wait for Completion' off when you use this. Leave empty to send nothing.",
+					hint: "Set the Wait node's HTTP Method to POST, which is not its default, and switch on its 'Limit Wait Time'. Rendobar posts the job on every ending, including one that stopped or was cancelled, but a call it cannot deliver is retried only five times over about five minutes — after that the parked execution has only that limit to release it.",
+				},
+				{
+					displayName: 'Idempotency Key',
+					name: 'idempotencyKey',
+					type: 'string',
+					default: '',
+					placeholder: 'e.g. order-4417',
+					description:
+						'What makes this submission the same submission. Rendobar keeps one job per key, so a repeat under a key it has seen returns the original job instead of charging for a second one. Leave empty and the node builds a key from the execution, the node, the run, the item and the values being submitted, which covers a repeat inside one execution. Set it to tie the job to something of your own that outlives an execution, such as an order number, and give every distinct submission its own value.',
+					hint: 'A key is bound to one job for good. Once that job has stopped without producing anything, only a different key can submit again — so if you retry deliberately, make sure this changes, for example by ending it in {{ $runIndex }}.',
+				},
+				{
+					displayName: 'Max Wait (Seconds)',
+					name: 'maxWait',
+					type: 'number',
+					default: 300,
+					typeOptions: { minValue: 5 },
+					description:
+						'How long to keep waiting. Once this passes, the item stops and reports that the job is still running.',
+				},
+				{
+					displayName: 'Poll Interval (Seconds)',
+					name: 'pollInterval',
+					type: 'number',
+					default: 5,
+					typeOptions: { minValue: 2 },
+					description: 'How often to check the job status while waiting',
+				},
+				{
+					displayName: 'Wait for Completion',
+					name: 'waitForCompletion',
+					type: 'boolean',
+					default: false,
+					description:
+						"Whether to hold the execution open until the job finishes and return its result. Suits jobs of a few minutes. For anything longer use 'Callback URL' with a Wait node, which parks the execution instead of holding a worker. The two are alternatives: leave this off whenever 'Callback URL' is set, because a call that arrives while this node is polling cannot be answered.",
+				},
+				],
 			},
 			{
 				displayName: 'Job',
@@ -1436,14 +1470,14 @@ export class Rendobar implements INodeType {
 					}
 
 					const callback = buildCallback(
-						this.getNodeParameter('callbackUrl', i, ''),
-						this.getNodeParameter('callbackHeaders', i, {}),
+						readCreateOption(this, 'callbackUrl', i, ''),
+						readCreateOption(this, 'callbackHeaders', i, {}),
 					);
 					if (!callback.ok) {
 						throw invalidParameter(node, callback.parameter, callback.what, callback.how, i);
 					}
 
-					const waitForCompletion = this.getNodeParameter('waitForCompletion', i, false) === true;
+					const waitForCompletion = readCreateOption(this, 'waitForCompletion', i, false) === true;
 
 					// Before the submission, not after: a job submitted under a pairing
 					// whose result can never be collected is a job billed for nothing.
@@ -1490,7 +1524,7 @@ export class Rendobar implements INodeType {
 					// The 'Idempotency Key' parameter is the lever for that, and
 					// submitJob walks off a key the node picked itself once Rendobar
 					// says it is spent.
-					const chosenKey = toIdentifier(this.getNodeParameter('idempotencyKey', i, ''));
+					const chosenKey = toIdentifier(readCreateOption(this, 'idempotencyKey', i, ''));
 					const idempotencyKey =
 						chosenKey === ''
 							? `n8n:${executionId}:${node.id}:${runIndex}:${i}:${fingerprint(submission)}`
@@ -1526,9 +1560,9 @@ export class Rendobar implements INodeType {
 							);
 						}
 						if (status === undefined || !TERMINAL_STATUSES.has(status)) {
-							const pollMs = toWholeNumber(this.getNodeParameter('pollInterval', i, 5), 5, 1) * 1000;
+							const pollMs = toWholeNumber(readCreateOption(this, 'pollInterval', i, 5), 5, 1) * 1000;
 							const maxWaitMs =
-								toWholeNumber(this.getNodeParameter('maxWait', i, 300), 300, 1) * 1000;
+								toWholeNumber(readCreateOption(this, 'maxWait', i, 300), 300, 1) * 1000;
 							job = await waitForJob.call(this, jobId, pollMs, maxWaitMs, i);
 						}
 					}

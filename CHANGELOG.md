@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Changed
+
+- The Create panel now shows four fields and an **Options** collection. Wait for
+  Completion, Poll Interval, Max Wait, Callback URL, Callback Headers and
+  Idempotency Key moved into it. Two of the ten fields that used to sit in the
+  panel were required, and the other eight carried the same visual weight.
+
+  **Existing workflows keep working.** The node reads Options first and falls
+  back to the old top-level location, so a workflow saved on 0.3.0 or 0.4.0
+  needs no edit. Options wins when a workflow carries both, and a value set to
+  `false` or `""` inside Options counts as set rather than as absent.
+
+  Callback Headers no longer hides itself until an address is given. Inside a
+  collection nothing renders until it is picked from Add Option, so the gate had
+  nothing left to prevent.
+
+  The README example workflows were updated to the new shape.
+
 ## 0.4.0 - 2026-08-20
 
 ### Added

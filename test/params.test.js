@@ -13,6 +13,15 @@ const { Rendobar } = require('../dist/nodes/Rendobar/Rendobar.node.js');
 
 const properties = new Rendobar().description.properties;
 const byName = (name) => properties.find((property) => property.name === name);
+// The Create options moved into an 'Options' collection in 0.5.0, so a lookup
+// by name has to descend into it. Kept as one helper rather than repeated
+// inline so a future move updates one place.
+const collectionChildren = (name) => {
+	const collection = properties.find((property) => property.type === 'collection' && property.name === name);
+	return collection ? collection.options : [];
+};
+const createOption = (name) => collectionChildren('options').find((option) => option.name === name);
+
 
 // Trimmed from the live response for https://api.rendobar.com/jobs/types/compose/schema.
 const composeSchema = {
@@ -90,12 +99,18 @@ test('the JSON editor names the job types that need it', () => {
 	}
 });
 
-test('the parameter editors sit between Job Type and the waiting controls', () => {
+test('the parameter editors sit between Job Type and Options', () => {
+	// The Create panel is four things and a disclosure now: what to run, what it
+	// reads, how the settings are given, and the settings themselves. Everything
+	// optional sits behind Options, which is the last thing in the panel.
 	const order = properties.map((property) => property.name);
 	assert.ok(order.indexOf('paramsMode') > order.indexOf('jobType'));
 	assert.ok(order.indexOf('params') > order.indexOf('paramsMode'));
 	assert.ok(order.indexOf('paramsJson') > order.indexOf('params'));
-	assert.ok(order.indexOf('waitForCompletion') > order.indexOf('paramsJson'));
+	assert.ok(
+		order.indexOf('options') > order.indexOf('paramsJson'),
+		'Options has to come after the editors it is optional relative to',
+	);
 });
 
 // ── Parameters nobody filled in ───────────────────────────────────────────
