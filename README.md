@@ -258,8 +258,10 @@ Manual trigger, one FFmpeg job, blocking until it finishes. Good for clips of a 
 						"command": "-i source -vf scale=-2:720 -c:v libx264 -crf 28 -preset fast output.mp4"
 					}
 				},
-				"waitForCompletion": true,
-				"maxWait": 600,
+				"options": {
+					"waitForCompletion": true,
+					"maxWait": 600
+				},
 				"output": "simplified"
 			},
 			"id": "1c7f5b60-6b3b-4a2f-b3f2-1a5d2c9e7b81",
@@ -371,7 +373,9 @@ It also shows **Parameters (JSON)**: `image.generate` offers a choice of paramet
 				"inputs": "{}",
 				"paramsMode": "json",
 				"paramsJson": "{\n  \"model\": \"standard\",\n  \"prompt\": \"a cutaway diagram of a espresso machine, technical illustration\",\n  \"width\": 1024,\n  \"height\": 1024\n}",
-				"callbackUrl": "={{ $execution.resumeUrl }}",
+				"options": {
+					"callbackUrl": "={{ $execution.resumeUrl }}"
+				},
 				"output": "simplified"
 			},
 			"id": "5b8e2d10-9c31-42f7-8a4d-6e0b3c7f1d92",
