@@ -46,6 +46,13 @@ const OUT_OF_SCOPE_TAGS = new Set([
 	'Upload Sessions', // share-link browser flow
 ]);
 
+// Endpoints inside an out-of-scope tag that the node deliberately DOES expose.
+// Without this, the report keeps listing them as unimplemented and the drift
+// signal degrades into noise the reader learns to skip.
+const OUT_OF_SCOPE_EXCEPTIONS = new Set([
+	'GET /billing/state', // Account -> Get. The balance the balance.* triggers fire on.
+]);
+
 // ─── live platform ────────────────────────────────────────────────────────────
 
 async function getJson(path) {
@@ -390,6 +397,9 @@ async function main() {
 	const outOfScopeGaps = [];
 	for (const op of live) {
 		if (calls.has(op.key)) continue;
+		// An endpoint the node deliberately exposes from an out-of-scope tag is not
+		// a gap, and listing it as one trains the reader to skip this section.
+		if (OUT_OF_SCOPE_EXCEPTIONS.has(op.key)) continue;
 		const line = `- \`${op.key}\`${op.summary ? ` — ${op.summary}` : ''}`;
 		const inScope = op.tags.some((t) => IN_SCOPE_TAGS.has(t) || unknownTags.has(t));
 		(inScope ? inScopeGaps : outOfScopeGaps).push(line);

@@ -1,7 +1,7 @@
 {
 	"name": "@rendobar/n8n-nodes-rendobar",
 	"version": "0.3.2",
-	"description": "Rendobar media processing for n8n: submit, track, and cancel video jobs, and trigger on completion.",
+	"description": "Rendobar media processing for n8n: submit, track, download and cancel media jobs, read job logs and account credits, and trigger on job events.",
 	"license": "MIT",
 	"homepage": "https://rendobar.com",
 	"publishConfig": {
