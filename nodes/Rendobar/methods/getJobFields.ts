@@ -77,8 +77,17 @@ export function toMapperField(field: JsonObject): ResourceMapperField | undefine
 		return [{ name: stringAt(option, 'label') ?? value, value }];
 	});
 
+	// The ResourceMapper keys rows by `id`, and `name` is not unique: a
+	// discriminated union emits one entry per shape, so image.generate returns
+	// FOUR `steps` fields with different bounds. Keyed on `name` the UI showed
+	// four identical-looking rows, one of which arbitrarily won.
+	//
+	// `key` is unique and is `name` or `name__<digest>`. Older API responses have
+	// no `key`, so fall back to `name` rather than dropping the field.
+	const key = stringAt(field, 'key') ?? name;
+
 	return {
-		id: name,
+		id: key,
 		displayName: stringAt(field, 'label') ?? name,
 		required,
 		display: true,
