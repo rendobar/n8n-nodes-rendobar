@@ -436,6 +436,28 @@ function requireIdentifier(
  * those nulls, and Rendobar refuses a null where it expects a number. Every
  * other value belongs to the user and goes out untouched, `0` included.
  */
+/**
+ * Turn ResourceMapper keys back into the parameter names the API expects.
+ *
+ * The mapper keys rows by the field's `key`, which is unique. The request has to
+ * be built from `name`, which is not: `image.generate` has four `steps` fields
+ * with different bounds, so their keys are `steps__<digest>`. The contract
+ * guarantees `key` is `name` or `name__<digest>` and that no name contains
+ * `__`, so the name is recoverable here without fetching the schema again on
+ * every submission.
+ */
+export function paramNamesFromKeys(params: JsonObject): JsonObject {
+	const named: JsonObject = {};
+	for (const [key, value] of Object.entries(params)) {
+		const name = /^(.+)__[0-9a-z]+$/.exec(key)?.[1] ?? key;
+		// Only one branch's fields are ever filled in, so a collision here would
+		// mean the form offered two variants at once. Last value wins, matching
+		// what the mapper itself would have done.
+		named[name] = value;
+	}
+	return named;
+}
+
 export function providedParams(params: JsonObject): JsonObject {
 	const provided: JsonObject = {};
 	for (const [name, value] of Object.entries(params)) {
@@ -461,7 +483,9 @@ export function providedParams(params: JsonObject): JsonObject {
  */
 function readParams(this: IExecuteFunctions, node: INode, itemIndex: number): JsonObject {
 	if (toIdentifier(this.getNodeParameter('paramsMode', itemIndex, 'fields')) !== 'json') {
-		return providedParams(readObject(this.getNodeParameter('params', itemIndex, {}), 'value') ?? {});
+		return providedParams(
+			paramNamesFromKeys(readObject(this.getNodeParameter('params', itemIndex, {}), 'value') ?? {}),
+		);
 	}
 
 	const parsed = readJsonParameter(this.getNodeParameter('paramsJson', itemIndex, {}));
