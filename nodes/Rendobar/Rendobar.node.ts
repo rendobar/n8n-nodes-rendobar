@@ -48,6 +48,7 @@ import { buildCallback, waitAndCallbackConflict } from './shared/callback';
 import { getJobTypes } from './listSearch/getJobTypes';
 import { getJobs } from './listSearch/getJobs';
 import { getJobFields } from './methods/getJobFields';
+import { getJobInputFields } from './methods/getJobInputFields';
 import {
 	ASSET_FIELDS,
 	buildAssetItem,
@@ -481,6 +482,38 @@ export function providedParams(params: JsonObject): JsonObject {
  * several parameters. Keeping the form from acquiring a value nobody chose is
  * `getJobFields`'s job instead.
  */
+/**
+ * The media the job reads, from whichever half of the form is showing.
+ *
+ * The field form is built from the API's inputs descriptor, so an untouched
+ * optional input arrives as an empty string and must be dropped rather than
+ * sent: an empty `subtitles` would override the auto-extraction that omitting
+ * it selects. An empty list is dropped for the same reason.
+ */
+function readInputs(this: IExecuteFunctions, node: INode, itemIndex: number): JsonObject {
+	if (toIdentifier(this.getNodeParameter('inputsMode', itemIndex, 'fields')) !== 'json') {
+		const mapped = readObject(this.getNodeParameter('inputFields', itemIndex, {}), 'value') ?? {};
+		const inputs: JsonObject = {};
+		for (const [name, value] of Object.entries(mapped)) {
+			if (value === undefined || value === null || value === '') continue;
+			if (Array.isArray(value) && value.length === 0) continue;
+			inputs[name] = value;
+		}
+		return inputs;
+	}
+
+	const parsed = readJsonParameter(this.getNodeParameter('inputs', itemIndex, {}));
+	if (parsed.ok) return parsed.value;
+
+	throw invalidParameter(
+		node,
+		'Inputs (JSON)',
+		parsed.reason === 'unparsable' ? 'is not valid JSON' : 'is not a JSON object',
+		'Give it a JSON object keyed by input name, for example { "source": "https://example.com/video.mp4" }.',
+		itemIndex,
+	);
+}
+
 function readParams(this: IExecuteFunctions, node: INode, itemIndex: number): JsonObject {
 	if (toIdentifier(this.getNodeParameter('paramsMode', itemIndex, 'fields')) !== 'json') {
 		return providedParams(
@@ -838,11 +871,57 @@ export class Rendobar implements INodeType {
 				],
 			},
 			{
+				displayName: 'Specify Inputs',
+				name: 'inputsMode',
+				type: 'options',
+				noDataExpression: true,
+				default: 'fields',
+				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
+				description: 'How to give the job the media it reads',
+				options: [
+					{
+						name: 'Using Fields Below',
+						value: 'fields',
+						description: "Fill in a field per input, built from the job type's own contract",
+					},
+					{
+						name: 'Using JSON',
+						value: 'json',
+						description:
+							'Write the whole inputs object yourself, for ffmpeg and ffprobe which name their files in the command',
+					},
+				],
+			},
+			{
+				displayName: 'Input Media',
+				name: 'inputFields',
+				type: 'resourceMapper',
+				noDataExpression: true,
+				default: { mappingMode: 'defineBelow', value: null },
+				required: true,
+				displayOptions: {
+					show: { resource: ['job'], operation: ['create'], inputsMode: ['fields'] },
+				},
+				typeOptions: {
+					loadOptionsDependsOn: ['jobType.value'],
+					resourceMapper: {
+						resourceMapperMethod: 'getJobInputFields',
+						mode: 'map',
+						fieldWords: { singular: 'input', plural: 'inputs' },
+						addAllFields: true,
+						multiKeyMatch: false,
+						supportAutoMap: false,
+					},
+				},
+			},
+			{
 				displayName: 'Inputs (JSON)',
 				name: 'inputs',
 				type: 'json',
 				default: '{}',
-				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
+				displayOptions: {
+					show: { resource: ['job'], operation: ['create'], inputsMode: ['json'] },
+				},
 				placeholder: 'e.g. { "source": "https://example.com/video.mp4" }',
 				description:
 					'The files the job reads, as a JSON object keyed by input name. Each value is a publicly reachable URL, or the URL an Upload returned.',
@@ -1298,7 +1377,7 @@ export class Rendobar implements INodeType {
 
 	methods = {
 		listSearch: { getJobTypes, getJobs },
-		resourceMapping: { getJobFields },
+		resourceMapping: { getJobFields, getJobInputFields },
 	};
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
@@ -1482,16 +1561,7 @@ export class Rendobar implements INodeType {
 						i,
 					);
 
-					const parsed = readJsonParameter(this.getNodeParameter('inputs', i, {}));
-					if (!parsed.ok) {
-						throw invalidParameter(
-							node,
-							'Inputs (JSON)',
-							parsed.reason === 'unparsable' ? 'is not valid JSON' : 'is not a JSON object',
-							'Give it a JSON object keyed by input name, for example { "source": "https://example.com/video.mp4" }.',
-							i,
-						);
-					}
+					const media = readInputs.call(this, node, i);
 
 					const callback = buildCallback(
 						readCreateOption(this, 'callbackUrl', i, ''),
@@ -1512,7 +1582,7 @@ export class Rendobar implements INodeType {
 
 					const submission: JsonObject = {
 						type: jobType,
-						inputs: parsed.value,
+						inputs: media,
 						params: readParams.call(this, node, i),
 						// Part of the submission, and so part of the fingerprint behind the
 						// idempotency key: two jobs that differ only in where the result is
