@@ -13,7 +13,7 @@ import type {
 // https://api.rendobar.com/.well-known/oauth-authorization-server advertises
 // authorization_code + refresh_token, S256 PKCE, a `none` token-endpoint auth
 // method (so a public client needs no secret), the scopes openid / profile /
-// email / offline_access / media:full, and a dynamic client registration
+// email / offline_access plus the resource scopes, and a dynamic client registration
 // endpoint. n8n ships a generic OAuth2 credential a community node can extend.
 //
 // The two still do not meet, and the reason is registration, not the protocol:
@@ -28,9 +28,9 @@ import type {
 //      A shared n8n client would therefore have to accept redirect URIs that are
 //      not known in advance. That is a security decision about the OAuth server,
 //      and it is the actual blocker.
-//   3. Scope and revocation need deciding: `media:full` is the only scope a
-//      workflow needs today, and what a nine-hour job should do when its refresh
-//      token is revoked mid-run has no answer yet.
+//   3. Scope and revocation need deciding: a workflow needs the job and asset
+//      scopes and nothing else, and what a nine-hour job should do when its
+//      refresh token is revoked mid-run has no answer yet.
 //
 // All three are product calls about the OAuth server rather than node work, and
 // none of them buys a workflow anything an API key does not already give it. The
