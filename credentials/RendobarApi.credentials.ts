@@ -6,6 +6,8 @@ import type {
 	INodeProperties,
 } from 'n8n-workflow';
 
+import { NODE_VERSION } from '../nodes/Rendobar/shared/version';
+
 // An API key is the only credential this package offers, and that is a decision
 // rather than an omission.
 //
@@ -74,8 +76,10 @@ export class RendobarApi implements ICredentialType {
 		properties: {
 			headers: {
 				Authorization: '=Bearer {{$credentials.apiKey}}',
-				// Usage attribution: identify this integration as the n8n client.
-				'X-Rendobar-Client': 'n8n',
+				// Usage attribution. `name/version` is the product form Rendobar
+				// parses; a bare name still works but loses the half that says
+				// which build a report came from.
+				'X-Rendobar-Client': `n8n/${NODE_VERSION}`,
 			},
 		},
 	};
