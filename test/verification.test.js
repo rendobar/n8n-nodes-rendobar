@@ -191,6 +191,20 @@ test('a resource-locator parameter in the examples uses the locator shape', () =
 	assert.ok(seen >= 2, 'the examples no longer exercise the resource locators');
 });
 
+/** The categories n8n recognises. Anything else is dropped by the UI. */
+const N8N_CATEGORIES = [
+	'Analytics',
+	'Communication',
+	'Data & Storage',
+	'Development',
+	'Finance & Accounting',
+	'Marketing & Content',
+	'Miscellaneous',
+	'Productivity',
+	'Sales',
+	'Utility',
+];
+
 test('both nodes ship a codex file pointing at the documentation', () => {
 	// Without one, n8n shows the node with no documentation link and no category.
 	const { Rendobar } = require('../dist/nodes/Rendobar/Rendobar.node.js');
@@ -205,6 +219,16 @@ test('both nodes ship a codex file pointing at the documentation', () => {
 		const codex = JSON.parse(readFileSync(join(root, ...file.split('/')), 'utf8'));
 		assert.equal(codex.node, `${pkg.name}.${nodeName}`, `${file} names the wrong node`);
 		assert.ok(codex.categories.length > 0, `${file} has no category`);
+		for (const category of codex.categories) {
+			// n8n silently drops a category it does not recognise, and the
+			// verification review rejects the package for it. "Marketing" was
+			// rejected in the 0.5.0 review; the supported value is
+			// "Marketing & Content".
+			assert.ok(
+				N8N_CATEGORIES.includes(category),
+				`${file} uses "${category}", which n8n does not support`,
+			);
+		}
 		assert.ok(codex.resources.primaryDocumentation[0].url.startsWith('https://'));
 		assert.ok(codex.resources.credentialDocumentation[0].url.startsWith('https://'));
 	}
