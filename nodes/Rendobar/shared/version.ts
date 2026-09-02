@@ -8,4 +8,4 @@
  * if this and the package version ever disagree, which is the part that keeps
  * it honest.
  */
-export const NODE_VERSION = '0.5.0';
+export const NODE_VERSION = '0.5.1';

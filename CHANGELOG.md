@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 - 2026-09-02
+
+### Fixed
+
+- Both codex files declared the category `Marketing`, which n8n does not
+  recognise and silently drops. The supported value is `Marketing & Content`.
+  Flagged in the verification review of 0.5.0.
+
+### Changed
+
+- `X-Rendobar-Client` now sends `n8n/<version>` instead of a bare `n8n`, so a
+  bug report names the build it came from.
+
+## 0.5.0 - 2026-08-30
 
 ### Changed
 
