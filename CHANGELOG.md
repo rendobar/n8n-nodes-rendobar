@@ -13,6 +13,15 @@
   under **Return All** — and the README carries all three at more length than a
   hint has room for.
 
+- Seven parameter descriptions that had grown into paragraphs are back to a
+  sentence or two. **Idempotency Key** was 490 characters and **Wait for
+  Completion** 369; both rendered as a block of grey text under a field inside a
+  collection. Nothing they said is lost — the key derivation, the Wait node's
+  Header Auth pairing and the rest are in the README. The two **Output**
+  selectors also stopped quoting how many fields a raw job or file carries,
+  which described Rendobar rather than the choice being made. A test caps a
+  description at 220 characters so they cannot grow back.
+
 ### Removed
 
 - The two parameter notices that fired before a job type was chosen ("Choose a

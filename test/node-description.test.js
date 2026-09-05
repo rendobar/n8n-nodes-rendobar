@@ -407,6 +407,24 @@ test('no parameter carries a hint', () => {
 	);
 });
 
+test('no parameter description runs past a paragraph', () => {
+	// The same review note that took the hints out applies to a description that
+	// has grown into one. Idempotency Key was 490 characters, Wait for Completion
+	// 369, and each of them rendered as a block of grey text under a field inside
+	// a collection. The cap is above the longest that survived the trim, so it
+	// blocks a relapse rather than forcing a rewrite of what is there.
+	const LIMIT = 220;
+	const trigger = allProperties(new RendobarTrigger().description.properties);
+	for (const property of [...everyProperty, ...trigger]) {
+		const { description: copy } = property;
+		if (typeof copy !== 'string') continue;
+		assert.ok(
+			copy.length <= LIMIT,
+			`"${property.displayName ?? property.name}" description is ${copy.length} characters; put the detail in the README`,
+		);
+	}
+});
+
 test('the node, trigger and credential all ship distinct light and dark icons', () => {
 	const cases = [
 		['node', description.icon, 'dist/nodes/Rendobar'],

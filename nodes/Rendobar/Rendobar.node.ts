@@ -979,7 +979,7 @@ export class Rendobar implements INodeType {
 				},
 				placeholder: 'e.g. { "schemaVersion": "1.0", "prompt": "a 15 second product tour" }',
 				description:
-					"The settings for the chosen job type, as a JSON object. Use this for job types whose settings are a choice between shapes, such as Compose, Image Generate and Image Edit, and for anything the form cannot express. See the parameter reference at https://rendobar.com/docs.",
+					'The settings for the chosen job type, as a JSON object. Compose, Image Generate and Image Edit need this, as does anything the form cannot express. See https://rendobar.com/docs.',
 			},
 			{
 				displayName: 'Options',
@@ -1001,7 +1001,7 @@ export class Rendobar implements INodeType {
 					default: {},
 					placeholder: 'Add Header',
 					description:
-						"Headers to send with the callback, so the receiver can tell a genuine call apart from anything else that finds the address. On a Wait node, match these to its own Header Auth credential. Names beginning with X-Rendobar- are kept for Rendobar's own delivery details.",
+						"Headers to send with the callback, so the receiver can tell a genuine call apart from anything else that finds the address. Names beginning with X-Rendobar- are reserved.",
 					options: [
 						{
 							displayName: 'Header',
@@ -1034,7 +1034,7 @@ export class Rendobar implements INodeType {
 					default: '',
 					placeholder: 'e.g. {{ $execution.resumeUrl }}',
 					description:
-						"Where Rendobar sends the finished job. Put a Wait node set to 'On Webhook Call' after this one and use its resume URL here. n8n then parks the execution instead of holding it open, so a job running for hours occupies no worker and needs no polling. Turn 'Wait for Completion' off when you use this. Leave empty to send nothing.",
+						"Where Rendobar sends the finished job. Use a Wait node's resume URL here and n8n parks the execution instead of holding a worker open. Turn 'Wait for Completion' off when you use this.",
 				},
 				{
 					displayName: 'Idempotency Key',
@@ -1043,7 +1043,7 @@ export class Rendobar implements INodeType {
 					default: '',
 					placeholder: 'e.g. order-4417',
 					description:
-						'What makes this submission the same submission. Rendobar keeps one job per key, so a repeat under a key it has seen returns the original job instead of charging for a second one. Leave empty and the node builds a key from the execution, the node, the run, the item and the values being submitted, which covers a repeat inside one execution. Set it to tie the job to something of your own that outlives an execution, such as an order number, and give every distinct submission its own value.',
+						'What makes this submission the same submission. Rendobar returns the original job for a key it has already seen instead of charging for a second one. Leave empty and the node derives one per item.',
 				},
 				{
 					displayName: 'Max Wait (Seconds)',
@@ -1068,7 +1068,7 @@ export class Rendobar implements INodeType {
 					type: 'boolean',
 					default: false,
 					description:
-						"Whether to hold the execution open until the job finishes and return its result. Suits jobs of a few minutes. For anything longer use 'Callback URL' with a Wait node, which parks the execution instead of holding a worker. The two are alternatives: leave this off whenever 'Callback URL' is set, because a call that arrives while this node is polling cannot be answered.",
+						"Whether to hold the execution open until the job finishes and return its result. Suits jobs of a few minutes; for longer ones use 'Callback URL' instead, and leave this off when you do.",
 				},
 				],
 			},
@@ -1300,7 +1300,7 @@ export class Rendobar implements INodeType {
 				// either value to it.
 				displayOptions: { show: { resource: ['job'] }, hide: { operation: ['getLogs'] } },
 				description:
-					'How much of the job to put on the item. A raw job carries around 33 fields, which is more than most workflows need and more than an AI agent can usefully read.',
+					'How much of the job to put on the item',
 				options: [
 					{
 						name: 'Raw',
@@ -1339,7 +1339,7 @@ export class Rendobar implements INodeType {
 				default: 'simplified',
 				displayOptions: { show: { resource: ['file'] } },
 				description:
-					'How much of the stored file to put on the item. A raw record carries 21 fields, most of which describe how Rendobar stores it rather than anything a workflow acts on.',
+					'How much of the stored file to put on the item',
 				options: [
 					{
 						name: 'Raw',
