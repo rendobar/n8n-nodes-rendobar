@@ -35,6 +35,14 @@
   Input media has had its own mapped form since 0.4.0, so it pointed at the
   wrong field.
 
+### Fixed
+
+- CI never ran the test suite. 245 tests, and nothing gated a pull request on
+  them; `npm run lint` and `npm run build` were the whole gate. The publish
+  workflow had the same hole, so a version tag could ship a red suite. Both run
+  `npm run test:unit` now, and `publish.yml`'s two actions are pinned by digest
+  the way `ci.yml`'s already were.
+
 ## 0.5.1 - 2026-09-02
 
 ### Fixed

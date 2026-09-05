@@ -40,6 +40,13 @@ jobs:
       - name: Run build
         run: npm run build
 
+      # The suite runs against dist/, so it goes after the build. It was not
+      # here at all until now: 245 tests, and nothing gated a pull request on
+      # them. `npm test` would repeat lint and build, so the unit script is
+      # called directly.
+      - name: Run tests
+        run: npm run test:unit
+
       # The scanner pins its own eslint and TypeScript, so it goes in a scratch
       # directory rather than this project's node_modules. Deliberately not
       # version-pinned: n8n reviewers run whatever is latest, so CI should meet
