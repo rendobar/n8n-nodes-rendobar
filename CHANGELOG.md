@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.5.2 - 2026-09-05
+
+### Changed
+
+- Every parameter hint is gone. Four fields carried one, and the verification
+  review asked whether they were needed when the description already covers the
+  field. **Input Binary Field** was the clearest case: its hint and its
+  description said the same sentence twice. The other three were caveats rather
+  than help — the Wait node's HTTP Method and Limit Wait Time under **Callback
+  URL**, key reuse after a spent job under **Idempotency Key**, and offset paging
+  under **Return All** — and the README carries all three at more length than a
+  hint has room for.
+
+### Removed
+
+- The two parameter notices that fired before a job type was chosen ("Choose a
+  job type above and its parameters load here"). The mapper already draws its
+  own empty state, so the line only repeated the panel back at the user. The
+  notices that remain are the ones that say something the panel cannot: that a
+  job type's parameters have no form and need **Using JSON**, that `ffmpeg` and
+  `ffprobe` name their input files in the command, and that a job type reads no
+  input files at all.
+- The "Give it its files in 'Inputs (JSON)'" half of the no-parameters notice.
+  Input media has had its own mapped form since 0.4.0, so it pointed at the
+  wrong field.
+
 ## 0.5.1 - 2026-09-02
 
 ### Fixed

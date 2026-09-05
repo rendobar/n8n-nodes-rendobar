@@ -382,12 +382,29 @@ test('display names are title case and descriptions are sentence case', () => {
 				`display name "${property.displayName}" should spell ID/URL in capitals`,
 			);
 		}
-		for (const copy of [property.description, property.hint]) {
-			if (typeof copy === 'string' && copy.length > 0) {
-				assert.match(copy, /^[A-Z]/, `"${copy}" should read as a sentence`);
-			}
+		const { description: copy } = property;
+		if (typeof copy === 'string' && copy.length > 0) {
+			assert.match(copy, /^[A-Z]/, `"${copy}" should read as a sentence`);
 		}
 	}
+});
+
+test('no parameter carries a hint', () => {
+	// Verification review, round 2: "are the hints really needed when the
+	// description should cover it?". They were paragraph-length caveats sitting
+	// under fields whose description already said what the field does, and every
+	// one of them is covered at length in the README. A hint that repeats the
+	// description is noise; a hint that adds a caveat the description does not
+	// carry is documentation in the wrong place.
+	const trigger = allProperties(new RendobarTrigger().description.properties);
+	const withHints = [...everyProperty, ...trigger].filter(
+		(property) => property.hint !== undefined,
+	);
+	assert.deepEqual(
+		withHints.map((property) => property.displayName),
+		[],
+		'put the wording in the description, or in the README',
+	);
 });
 
 test('the node, trigger and credential all ship distinct light and dark icons', () => {

@@ -132,12 +132,10 @@ export async function getJobFields(this: ILoadOptionsFunctions): Promise<Resourc
 	const selected = this.getNodeParameter('jobType', undefined, { extractValue: true });
 	const jobType = typeof selected === 'string' ? selected.trim() : '';
 
-	if (jobType === '') {
-		return {
-			fields: [],
-			emptyFieldsNotice: "Choose a job type above and its parameters load here.",
-		};
-	}
+	// No notice while Job Type is empty: the mapper already draws its own empty
+	// state, and a line telling the user to fill in the field above it adds
+	// nothing the panel does not already show.
+	if (jobType === '') return { fields: [] };
 
 	const response = await rendobarApiRequest.call(this, {
 		method: 'GET',
@@ -158,6 +156,6 @@ export async function getJobFields(this: ILoadOptionsFunctions): Promise<Resourc
 		fields,
 		emptyFieldsNotice: describesParameters(objectAt(objectAt(response, 'data'), 'jsonSchema'))
 			? `The '${jobType}' job type takes parameters that cannot be shown as a form. Set 'Specify Parameters' to 'Using JSON' and write them there.`
-			: `The '${jobType}' job type takes no parameters. Give it its files in 'Inputs (JSON)'.`,
+			: `The '${jobType}' job type takes no parameters.`,
 	};
 }

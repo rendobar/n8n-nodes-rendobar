@@ -1035,7 +1035,6 @@ export class Rendobar implements INodeType {
 					placeholder: 'e.g. {{ $execution.resumeUrl }}',
 					description:
 						"Where Rendobar sends the finished job. Put a Wait node set to 'On Webhook Call' after this one and use its resume URL here. n8n then parks the execution instead of holding it open, so a job running for hours occupies no worker and needs no polling. Turn 'Wait for Completion' off when you use this. Leave empty to send nothing.",
-					hint: "Set the Wait node's HTTP Method to POST, which is not its default, and switch on its 'Limit Wait Time'. Rendobar posts the job on every ending, including one that stopped or was cancelled, but a call it cannot deliver is retried only five times over about five minutes — after that the parked execution has only that limit to release it.",
 				},
 				{
 					displayName: 'Idempotency Key',
@@ -1045,7 +1044,6 @@ export class Rendobar implements INodeType {
 					placeholder: 'e.g. order-4417',
 					description:
 						'What makes this submission the same submission. Rendobar keeps one job per key, so a repeat under a key it has seen returns the original job instead of charging for a second one. Leave empty and the node builds a key from the execution, the node, the run, the item and the values being submitted, which covers a repeat inside one execution. Set it to tie the job to something of your own that outlives an execution, such as an order number, and give every distinct submission its own value.',
-					hint: 'A key is bound to one job for good. Once that job has stopped without producing anything, only a different key can submit again — so if you retry deliberately, make sure this changes, for example by ending it in {{ $runIndex }}.',
 				},
 				{
 					displayName: 'Max Wait (Seconds)',
@@ -1169,7 +1167,6 @@ export class Rendobar implements INodeType {
 				default: false,
 				displayOptions: { show: { resource: ['job'], operation: ['getAll'] } },
 				description: 'Whether to return all results or only up to a given limit',
-				hint: "Pages are read one after another, so a job created while this runs can shift the later ones. Duplicates are removed, but a job can still slip past the window. Set 'Created Before' under Filters when the list has to be exact.",
 			},
 			{
 				displayName: 'Limit',
@@ -1278,7 +1275,6 @@ export class Rendobar implements INodeType {
 				required: true,
 				displayOptions: { show: { resource: ['file'], operation: ['upload'] } },
 				placeholder: 'e.g. data',
-				hint: 'The name of the input field holding the file to send',
 				description: 'Name of the field from a previous node that holds the file to send',
 			},
 			{

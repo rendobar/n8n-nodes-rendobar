@@ -90,9 +90,8 @@ export async function getJobInputFields(this: ILoadOptionsFunctions): Promise<Re
 	const selected = this.getNodeParameter('jobType', undefined, { extractValue: true });
 	const jobType = typeof selected === 'string' ? selected.trim() : '';
 
-	if (jobType === '') {
-		return { fields: [], emptyFieldsNotice: 'Choose a job type above and its inputs load here.' };
-	}
+	// See getJobFields: nothing to say until a job type is chosen.
+	if (jobType === '') return { fields: [] };
 
 	const response = await rendobarApiRequest.call(this, {
 		method: 'GET',
