@@ -43,7 +43,7 @@ test('differing only in inputs, or only in params, is still a different key', ()
 });
 
 test('a retry of the same request reuses the same key', () => {
-	// This is the whole point of the key: n8n retrying the step must settle on
+	// n8n retrying the step must settle on
 	// the job the first attempt created rather than paying for a second one.
 	assert.equal(key(toolCall, compress), key(toolCall, compress));
 
@@ -124,16 +124,14 @@ test('fingerprints spread across many distinct submissions', () => {
 	assert.equal(seen.size, 5000, 'two distinct submissions fingerprinted the same');
 });
 
-// ── Moving off a key Rendobar has already spent ────────────────────────────
+// Moving off a key Rendobar has already spent.
 //
-// `POST /jobs` binds a key to one job and keeps the binding after that job
-// ends. Once the job it created has stopped with a code Rendobar itself calls
-// retryable, the key can do nothing: it cannot hand back a usable job and it
-// cannot start a second one. It answers 409 CONFLICT naming the job instead.
+// `POST /jobs` binds a key to one job and keeps the binding after it ends. Once
+// that job has stopped with a retryable code the key can do nothing: no usable
+// job to return and no second job to start, so it answers 409 CONFLICT naming it.
 //
-// Every component of the automatic key above is stable inside one execution,
-// so a DELIBERATE retry of the same submission rebuilds the same key and meets
-// that 409 — which is what the node has to get past.
+// Every component of the automatic key is stable inside one execution, so a
+// deliberate retry rebuilds the same key and meets that 409.
 
 const {
 	retryKeyFor,

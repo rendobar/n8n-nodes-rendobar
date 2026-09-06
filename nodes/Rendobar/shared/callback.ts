@@ -2,22 +2,15 @@ import type { JsonObject } from './json';
 import { readString, readValue } from './json';
 
 /**
- * Builds the `callback` object `POST /jobs` accepts, from the two parameters
- * the editor shows.
+ * The `callback` object `POST /jobs` accepts.
  *
- * Rendobar POSTs the finished job to this URL on every terminal state, which is
- * what lets an n8n workflow reach the platform's nine-hour job ceiling: point it
- * at a Wait node's resume URL and n8n persists the execution rather than holding
- * it open, so no worker is pinned and no poll loop has to outlive the job.
+ * Rendobar POSTs the finished job on every terminal state. Delivery is best
+ * effort: a call not answered with a 2xx is retried five times over about five
+ * minutes and then dropped, so a Wait node parked on a resume URL still needs
+ * its own 'Limit Wait Time'.
  *
- * Delivery is best effort rather than a guarantee. A call not answered with a
- * 2xx is retried five times over roughly the next five minutes and then given
- * up on, so a Wait node parked on a resume URL still needs its own 'Limit Wait
- * Time' to have a way out. The README says so beside the recipe.
- *
- * The result is a discriminated union rather than a throw, so the caller raises
- * the error naming the parameter at fault, the way every other reader here
- * works.
+ * A union rather than a throw, so the caller raises the error naming the
+ * parameter at fault.
  */
 export type CallbackResult =
 	| { ok: true; callback: JsonObject | undefined }
@@ -25,11 +18,9 @@ export type CallbackResult =
 
 const RESERVED_HEADER_PREFIX = 'x-rendobar-';
 
-// Hosts Rendobar cannot reach. This is not a security control — the API runs its
-// own check and is the authority on what it will accept. It exists so the
-// mistake almost every self-hosted user makes first, pointing the callback at
-// the loopback address n8n reports to itself, is answered with the fix instead
-// of with "URL must use HTTPS".
+// Hosts Rendobar cannot reach. Not a security control; the API runs its own
+// check. This is here so the common self-hosted mistake, pointing the callback
+// at the loopback address n8n reports to itself, gets the fix in the message.
 const PRIVATE_HOST_PREFIX =
 	/^(localhost$|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[::1\]$|\[fc00:|\[fe80:)/i;
 const PRIVATE_HOST_SUFFIX = /(\.internal|\.local)$/i;
@@ -38,11 +29,9 @@ const TUNNEL_ADVICE =
 	'Rendobar calls back from the public internet, so the address has to be one it can reach over HTTPS. On a local n8n, start it with a tunnel (n8n start --tunnel) or put it behind a public HTTPS address, then use the resume URL that gives you.';
 
 /**
- * Reads the name/value rows of the Callback Headers collection into the object
- * the API takes. A row with no name is dropped rather than sent as an empty
- * header. A reserved name is reported instead of being quietly discarded,
- * because a header the user believes is being sent and is not would show up
- * later as an unexplained rejection at their own receiver.
+ * The Callback Headers rows as the object the API takes. A row with no name is
+ * dropped. A reserved name is reported rather than discarded: a header the user
+ * thinks is being sent would otherwise surface as a rejection at their receiver.
  */
 export function readCallbackHeaders(value: unknown): {
 	headers: JsonObject;
@@ -117,24 +106,17 @@ export function buildCallback(rawUrl: unknown, rawHeaders: unknown): CallbackRes
 }
 
 /**
- * Whether 'Wait for Completion' and 'Callback URL' were both asked for, which
- * is a combination that cannot work and is checked before the job is submitted.
+ * Whether 'Wait for Completion' and 'Callback URL' were both set. Checked before
+ * `POST /jobs`, so nothing is billed for a submission that cannot be collected.
  *
- * The two are alternatives, and using them together loses the callback for
- * certain — this is a sequence, not a race. Rendobar calls the address the
- * moment the job ends. At that moment this node is still inside its poll loop,
- * so the execution's status is `running` and n8n's waiting-webhook endpoint
- * answers 409 rather than resuming; Rendobar's five retries then run out over
- * the following few minutes. By the time the poll returns and the execution
- * reaches the Wait node there is nothing left to deliver, and a Wait node with
- * no 'Limit Wait Time' set has no ceiling — the execution parks for good.
+ * The combination loses the callback every time, not sometimes. Rendobar calls
+ * the moment the job ends; this node is still polling, so the execution is
+ * `running` and n8n's waiting-webhook endpoint answers 409. The five retries run
+ * out before the poll returns and the execution reaches the Wait node, which
+ * then parks for good unless 'Limit Wait Time' is set.
  *
- * Refusing beats hiding one parameter behind the other: someone who has already
- * built the workflow reads what they set, told plainly which half to drop.
- * Refusing also beats quietly ignoring one of them, which would hand the next
- * node an unfinished job (or park the Wait node anyway) with nothing said. The
- * check runs before `POST /jobs`, so nothing is submitted or billed for a
- * submission that cannot be collected.
+ * Refused rather than hidden or ignored: the user reads back what they set and
+ * is told which half to drop.
  */
 export function waitAndCallbackConflict(
 	hasCallback: boolean,

@@ -4,6 +4,8 @@
 // come back as a 400 that does not mention n8n at all.
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
+const { resolve } = require('node:path');
 
 const {
 	buildCallback,
@@ -131,7 +133,7 @@ test('the header reader survives a value that is not the collection shape', () =
 	}
 });
 
-// ── The two parameters behind it ──────────────────────────────────────────
+// The two parameters behind it
 
 const { Rendobar } = require('../dist/nodes/Rendobar/Rendobar.node.js');
 
@@ -158,22 +160,24 @@ test('Create takes a callback address, on the Job resource only', () => {
 	const optionsCollection = properties.find((property) => property.name === 'options');
 	assert.deepEqual(optionsCollection.displayOptions.show.operation, ['create']);
 	assert.deepEqual(optionsCollection.displayOptions.show.resource, ['job']);
-	// The whole point is the Wait node pairing, so the example has to be it.
+	// The example has to be the Wait node pairing.
 	assert.match(url.placeholder, /\$execution\.resumeUrl/);
 	assert.match(url.description, /Wait node/);
 });
 
-test('the callback hint names the two Wait node settings the recipe needs', () => {
-	const { hint } = createOption('callbackUrl');
+test('the README names the two Wait node settings the recipe needs', () => {
+	// These two used to be a hint under Callback URL. The verification reviewer
+	// asked the hints to go, so the README is the only place that carries them
+	// now, and this pins that it still does.
+	const readme = readFileSync(resolve(__dirname, '..', 'README.md'), 'utf8');
 	// The Wait node's resume webhook answers GET by default and Rendobar posts,
 	// and a method mismatch is answered with a 404 that names nothing. It is the
 	// one setting that decides whether any of this works.
-	assert.match(hint, /POST/);
+	assert.ok(readme.includes('HTTP Method to POST'), 'the README stopped naming the POST method');
 	// And this is the one that decides what happens when the call never lands.
 	// Without it a Wait node on a resume URL has no ceiling at all, so an
 	// execution that misses the delivery window parks for good.
-	assert.match(hint, /Limit Wait Time/);
-	assert.doesNotMatch(hint, BANNED_WORDS);
+	assert.ok(readme.includes('Limit Wait Time'), 'the README stopped naming Limit Wait Time');
 });
 
 test('no copy promises a delivery the retry window cannot keep', () => {
@@ -184,14 +188,16 @@ test('no copy promises a delivery the retry window cannot keep', () => {
 	const callbackUrl = createOption('callbackUrl');
 	const overclaim = /\bnever\b|\balways\b|\bguarantee/i;
 
-	for (const copy of [callbackUrl.description, callbackUrl.hint]) {
-		assert.doesNotMatch(copy, overclaim, `callback copy overclaims delivery: ${copy}`);
-	}
+	assert.doesNotMatch(
+		callbackUrl.description,
+		overclaim,
+		`callback copy overclaims delivery: ${callbackUrl.description}`,
+	);
 });
 
 test('the two delivery routes are refused together, and each is fine alone', () => {
-	// Behaviour, not wording. This is the combination that parks an execution for
-	// good, and it is answered before the job is submitted.
+	// Behaviour, not wording: the combination that parks an execution for good,
+	// answered before the job is submitted.
 	assert.ok(waitAndCallbackConflict(true, true), 'both together must be refused');
 
 	assert.equal(waitAndCallbackConflict(true, false), undefined, 'a callback alone is fine');

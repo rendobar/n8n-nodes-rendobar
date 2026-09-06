@@ -242,10 +242,8 @@ test("n8n's own Custom API Call is injectable into this node", () => {
 	// user at the HTTP Request node with the Rendobar credential already applied,
 	// which reaches every endpoint this node does not model.
 	//
-	// That is why the package ships no Custom API Call operation of its own: the
-	// affordance already exists, a hand-written one would be a second and worse
-	// path to the same place, and the injector skips a dropdown that already ends
-	// with such an entry.
+	// So the package ships no Custom API Call operation of its own: the injector
+	// skips a dropdown that already ends with such an entry.
 	const { RendobarApi } = require('../dist/credentials/RendobarApi.credentials.js');
 	const credential = new RendobarApi();
 	assert.ok(credential.authenticate, 'no authenticate means n8n injects nothing');

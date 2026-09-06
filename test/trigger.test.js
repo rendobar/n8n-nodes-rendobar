@@ -145,7 +145,7 @@ test('the trigger deliberately does not advertise itself as an AI tool', () => {
 // n8n writes a production webhook path with the node name percent-encoded and
 // stores that string verbatim (webhook_entity.webhookPath), but it matches an
 // inbound request against the path Express has already decoded. Any node name
-// that needed escaping — the default `Rendobar Trigger` has a space — is
+// that needed escaping, the default `Rendobar Trigger` has a space, is
 // registered at an address that answers 404 forever. The node re-encodes each
 // segment so n8n's single decode lands back on what it stored.
 const { deliverableWebhookUrl } = require('../dist/nodes/RendobarTrigger/RendobarTrigger.node.js');
@@ -173,7 +173,7 @@ function n8nMatchedPath(url) {
 // already deliverable and must not be touched.
 const PLAIN_NAMES = ['RendobarTrigger', 'rendobar', 'rendobar-trigger', 'trigger_1'];
 
-// Node names n8n escapes on the way in, which is what breaks delivery.
+// Node names n8n escapes on the way in, which breaks delivery.
 const ESCAPED_NAMES = [
 	'Rendobar Trigger',
 	'Rendobar  Trigger',
@@ -233,7 +233,7 @@ test('only the path is rewritten, and only the segments that need it', () => {
 
 test('the default node name is one n8n escapes, so the rewrite stays exercised', () => {
 	// Renaming the node to something space-free would hide the break rather than
-	// fix it — a user can rename a node to anything. Keeping a name n8n has to
+	// fix it, a user can rename a node to anything. Keeping a name n8n has to
 	// escape means the round trip above is what the default configuration runs.
 	const name = new RendobarTrigger().description.defaults.name;
 	assert.notEqual(

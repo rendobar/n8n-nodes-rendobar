@@ -34,18 +34,15 @@ const MAX_RETRY_DELAY_MS = 30_000;
 const THROTTLED_STATUS = 429;
 const TRANSIENT_SERVER_STATUS = new Set([500, 502, 503, 504]);
 
-// Rendobar answers 429 for two unrelated reasons and they need opposite
-// handling.
+// Rendobar answers 429 for two reasons that need opposite handling.
 //
-// `RATE_LIMITED` is raised by middleware before the route body runs, so nothing
-// happened and repeating the call is free.
+// `RATE_LIMITED` comes from middleware before the route body runs, so nothing
+// happened and repeating is free.
 //
-// `QUEUE_FULL` is raised deep inside job submission — after the compose-assist
-// window has already probed every input asset and run a model over them, both
-// of which are billed. Repeating that call re-runs and re-bills all of it, and
-// a queue does not drain inside a backoff measured in seconds anyway. So it is
-// reported to the user as something they can retry later, but never retried
-// here.
+// `QUEUE_FULL` comes from inside job submission, after compose-assist has probed
+// every input asset and run a model over them, both billed. Repeating re-bills
+// all of it, and a queue does not drain inside a seconds-long backoff. Reported
+// as retryable later, never retried here.
 const NEVER_RETRIED_CODES = new Set(['QUEUE_FULL']);
 
 export interface RendobarRequest {
@@ -55,10 +52,9 @@ export interface RendobarRequest {
 	body?: JsonObject;
 	qs?: Record<string, string | number | boolean>;
 	/**
-	 * True when repeating the request after a server-side stall cannot duplicate
-	 * a side effect — every GET and DELETE, and the POSTs that either carry an
-	 * idempotency key or settle to the same state twice. Left false for calls
-	 * that create something new, so a retry cannot leave a stray record behind.
+	 * True when repeating after a server-side stall cannot duplicate a side
+	 * effect: every GET and DELETE, plus POSTs carrying an idempotency key or
+	 * settling to the same state twice. False for calls that create something.
 	 */
 	idempotent?: boolean;
 	timeoutMs?: number;
@@ -81,10 +77,9 @@ interface FullResponse {
 }
 
 /**
- * Reads `Retry-After`, which RFC 9110 allows in either delta-seconds or
- * HTTP-date form. Returns seconds to wait, or undefined when the header is
- * absent or unreadable. Rendobar does not send it today, but Cloudflare and any
- * proxy in front of it may, and honouring it is strictly better than guessing.
+ * `Retry-After` in either RFC 9110 form (delta-seconds or HTTP-date), as seconds
+ * to wait. Rendobar does not send it, but Cloudflare and proxies in front of it
+ * may.
  */
 export function parseRetryAfter(
 	header: string | string[] | undefined,
@@ -101,9 +96,8 @@ export function parseRetryAfter(
 }
 
 /**
- * Exponential backoff with jitter. The jitter matters because an n8n workflow
- * fans a batch of items out at once: without it every item retries on the same
- * tick and rebuilds the burst that caused the throttling.
+ * Exponential backoff with jitter. An n8n workflow fans a batch out at once, so
+ * without jitter every item retries on the same tick and rebuilds the burst.
  */
 export function retryDelayMs(attempt: number, retryAfterSeconds?: number): number {
 	if (retryAfterSeconds !== undefined) {
@@ -148,10 +142,9 @@ function unreachable(node: INode, url: string, cause: unknown): NodeOperationErr
 }
 
 /**
- * Sends one request, retrying transient answers, and hands back the response
- * whatever its status. Callers that care only about success use
- * {@link rendobarApiRequest}; callers that need to see a 404 as data — the
- * trigger checking whether its endpoint still exists — use this.
+ * One request with transient retries, returning the response whatever its status.
+ * Use {@link rendobarApiRequest} unless a non-2xx is data rather than a stop, as
+ * it is for the trigger checking whether its endpoint still exists.
  */
 export async function rendobarRequest(
 	this: RendobarContext,
@@ -167,8 +160,8 @@ export async function rendobarRequest(
 		json: true,
 		timeout: spec.timeoutMs ?? REQUEST_TIMEOUT_MS,
 		returnFullResponse: true,
-		// Statuses are handled here rather than as thrown exceptions so the retry
-		// decision and the message both work from the parsed body.
+		// Handled here rather than as thrown exceptions, so the retry decision and
+		// the message both read the parsed body.
 		ignoreHttpStatusErrors: true,
 	};
 	if (spec.qs !== undefined) options.qs = spec.qs;
@@ -178,17 +171,16 @@ export async function rendobarRequest(
 		let response: FullResponse;
 		try {
 			// The helper is typed `any`; the options above pin the shape to n8n's
-			// full-response envelope with a JSON-parsed body. This is the single
-			// point where an untyped value enters the package — everything past it
-			// is narrowed with the guards in ./json.
+			// full-response envelope with a JSON-parsed body. The single point where
+			// an untyped value enters; everything past it uses the ./json guards.
 			response = (await this.helpers.httpRequestWithAuthentication.call(
 				this,
 				'rendobarApi',
 				options,
 			)) as FullResponse;
 		} catch (cause) {
-			// No response came back, so the request may or may not have been acted
-			// on. Only repeat it when doing so cannot duplicate anything.
+			// No response, so the request may or may not have been acted on. Repeat
+			// only when that cannot duplicate anything.
 			if (attempt >= MAX_ATTEMPTS || !idempotent) throw unreachable(this.getNode(), url, cause);
 			await sleep(retryDelayMs(attempt));
 			continue;
@@ -227,7 +219,7 @@ export async function rendobarApiRequest(
 	);
 }
 
-// ── Uploads ───────────────────────────────────────────────────────────────
+// Uploads
 
 /**
  * A file to send, described without holding it in memory. `size` is needed up
@@ -245,10 +237,9 @@ export interface UploadSource {
 }
 
 /**
- * Regroups a stream of arbitrary chunks into buffers of exactly `chunkSize`
- * bytes, with a shorter final one. Holds at most one chunk plus one inbound
- * read at a time, which is what keeps a multi-gigabyte upload inside a fixed
- * memory ceiling.
+ * Regroups arbitrary chunks into buffers of exactly `chunkSize` bytes, with a
+ * shorter final one. Holds one chunk plus one inbound read at a time, which is
+ * what keeps a multi-gigabyte upload inside a fixed memory ceiling.
  */
 export async function* chunkStream(
 	source: AsyncIterable<Buffer>,
@@ -276,12 +267,11 @@ export async function* chunkStream(
 }
 
 /**
- * Describes the binary data on an item as an {@link UploadSource}.
+ * The binary data on an item as an {@link UploadSource}.
  *
- * When n8n is running in its filesystem or S3 binary mode the payload lives
- * outside the process and is read back a chunk at a time, so a file far larger
- * than the heap still uploads. Only in the legacy in-memory mode is the whole
- * item already resident, and there reading it costs nothing extra.
+ * In n8n's filesystem or S3 binary mode the payload lives outside the process and
+ * is read a chunk at a time, so a file larger than the heap still uploads. In the
+ * legacy in-memory mode the item is already resident.
  */
 export async function binaryUploadSource(
 	ctx: IExecuteFunctions,
@@ -306,9 +296,8 @@ export async function binaryUploadSource(
 		};
 	}
 
-	// In-memory mode: the item already holds the bytes, so there is nothing to
-	// stream and handing the buffer over costs nothing extra. `chunkStream`
-	// slices it into parts with `subarray`, which are views rather than copies.
+	// In-memory mode: the item already holds the bytes. `chunkStream` slices it
+	// with `subarray`, which are views rather than copies.
 	const buffer = await ctx.helpers.getBinaryDataBuffer(itemIndex, binaryProperty);
 	return {
 		size: buffer.length,
@@ -331,9 +320,8 @@ async function putChunk(
 	for (let attempt = 1; ; attempt++) {
 		let response: FullResponse;
 		try {
-			// Presigned URLs carry their own signature, so these must NOT include
-			// the Rendobar credential — hence the plain helper, not the
-			// authenticating one. Same untyped-boundary note as above.
+			// Presigned URLs carry their own signature, so these must NOT include the
+			// Rendobar credential: plain helper, not the authenticating one.
 			response = (await ctx.helpers.httpRequest({
 				method: 'PUT',
 				url,
@@ -379,10 +367,9 @@ async function putChunk(
 }
 
 /**
- * Guards the one way this upload could go wrong quietly: the byte count
- * declared to `POST /assets` decides how storage assembles the object, so if
- * the file read back a different length the stored file would be wrong with no
- * complaint from anyone.
+ * The byte count declared to `POST /assets` decides how storage assembles the
+ * object, so a file that read back a different length would be stored wrong with
+ * nothing complaining.
  */
 export function assertWholeFileSent(
 	node: INode,
@@ -416,10 +403,9 @@ function malformedUploadResponse(node: INode, what: string, itemIndex: number): 
 }
 
 /**
- * Uploads a file through the Rendobar asset flow: reserve, send the bytes
- * straight to storage over the presigned link(s), then finalize. The bytes
- * never pass through the Rendobar API. Returns the ready asset, whose `url` is
- * what a job takes as an input.
+ * Reserve, send the bytes straight to storage over the presigned link(s), then
+ * finalize. The bytes never pass through the Rendobar API. Returns the ready
+ * asset, whose `url` is what a job takes as an input.
  */
 export async function rendobarUpload(
 	this: IExecuteFunctions,
@@ -440,9 +426,9 @@ export async function rendobarUpload(
 		);
 	}
 
-	// 1. Reserve the asset and learn how the bytes should be sent. Deliberately
-	// not marked idempotent: a repeat after a stalled response would reserve a
-	// second asset rather than settle the first.
+	// 1. Reserve, and learn how the bytes should be sent. Not idempotent: a repeat
+	// after a stalled response reserves a second asset rather than settling the
+	// first.
 	const init = await rendobarApiRequest.call(
 		this,
 		{
@@ -480,10 +466,9 @@ export async function rendobarUpload(
 		const uploaded: JsonObject[] = [];
 		const chunks = chunkStream(source.read(), partSize);
 		let sent = 0;
-		// Rendobar sized the part list from the byte count declared at init. A
-		// source that turned out to be longer fills every one of those parts and
-		// leaves the remainder unsent, and because the parts are full the byte
-		// count alone still adds up — so the leftover has to be looked for.
+		// Rendobar sized the part list from the byte count declared at init. A longer
+		// source fills every part and leaves the remainder unsent, and the byte count
+		// still adds up because the parts are full, so look for the leftover.
 		let moreRemaining = false;
 
 		try {
@@ -519,10 +504,9 @@ export async function rendobarUpload(
 			throw malformedUploadResponse(this.getNode(), 'an upload target', itemIndex);
 		}
 
-		// Under the multipart threshold the file goes in one request, so the whole
-		// of it is gathered first — bounded by that threshold, not by the file.
-		// Rendobar reads the tag back from storage itself, so `complete` needs no
-		// body.
+		// Under the multipart threshold the file goes in one request, so it is
+		// gathered first, bounded by that threshold rather than by the file.
+		// Rendobar reads the tag back from storage, so `complete` needs no body.
 		const collected: Buffer[] = [];
 		let sent = 0;
 		for await (const chunk of source.read()) {

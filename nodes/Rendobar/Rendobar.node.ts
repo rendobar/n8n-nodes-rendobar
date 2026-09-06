@@ -79,9 +79,8 @@ const FIELD_LABEL_OVERRIDES: Record<string, string> = {
 	etag: 'ETag',
 };
 
-// Derived from the single source of truth in shared/output.ts, so there is no
-// second hand-kept list. Sorted on the label rather than the field name,
-// because that is what the user reads and the overrides above move some of them
+// Derived from shared/output.ts so there is no second hand-kept list. Sorted on
+// the label, not the field name, because the overrides above move some of them
 // (`eta` reads as "ETA", `webUrl` as "Web URL").
 function fieldOptions(fields: readonly string[]): INodePropertyOptions[] {
 	return fields
@@ -95,9 +94,8 @@ function fieldOptions(fields: readonly string[]): INodePropertyOptions[] {
 const JOB_FIELD_OPTIONS: INodePropertyOptions[] = fieldOptions(JOB_FIELDS);
 const ASSET_FIELD_OPTIONS: INodePropertyOptions[] = fieldOptions(ASSET_FIELDS);
 
-// ── Parameter readers ─────────────────────────────────────────────────────
-// `getNodeParameter` hands back a broad union. These turn one into the value
-// the code below actually needs, without asserting a shape nothing checked.
+// Parameter readers. `getNodeParameter` hands back a broad union; these narrow
+// one to the value the code needs without asserting an unchecked shape.
 
 function toOutputMode(value: unknown): OutputMode {
 	return value === 'raw' || value === 'selected' ? value : 'simplified';
@@ -116,10 +114,10 @@ function toIdentifier(value: unknown): string {
 }
 
 /**
- * `typeOptions.minValue` only constrains what the editor lets you type; an
- * expression can still resolve to zero or a negative number at run time. A poll
- * interval of zero would spin against the API, and a negative page size is read
- * by SQLite as "no limit", so the floor is enforced here as well.
+ * `typeOptions.minValue` only constrains the editor; an expression can still
+ * resolve to zero or negative at run time. A poll interval of zero spins against
+ * the API and a negative page size reads as "no limit" in SQLite, so the floor is
+ * enforced here too.
  */
 function toWholeNumber(value: unknown, fallback: number, minimum: number): number {
 	const number = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback;
@@ -127,10 +125,9 @@ function toWholeNumber(value: unknown, fallback: number, minimum: number): numbe
 }
 
 /**
- * Serialises a submission the same way every time, whatever order the keys
- * arrive in. n8n rebuilds a resource-mapper value from the stored parameters on
- * each run, so relying on insertion order would make the same submission
- * fingerprint differently between runs.
+ * Serialises a submission identically whatever order the keys arrive in. n8n
+ * rebuilds a resource-mapper value from the stored parameters each run, so
+ * insertion order would fingerprint the same submission differently.
  */
 export function stableStringify(value: JsonValue): string {
 	if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
@@ -144,11 +141,9 @@ export function stableStringify(value: JsonValue): string {
 }
 
 /**
- * A short, stable fingerprint of what is being submitted.
- *
- * This is not a security boundary — it only has to differ between two different
- * submissions, so a pair of FNV-1a-style passes is plenty and keeps the node
- * free of the `node:crypto` import a verified community node may not have.
+ * A short, stable fingerprint of a submission. Not a security boundary: it only
+ * has to differ between two different submissions, so two FNV-1a-style passes are
+ * enough and avoid the `node:crypto` import a verified node may not have.
  */
 export function fingerprint(value: JsonValue): string {
 	const text = stableStringify(value);
@@ -165,47 +160,39 @@ export function fingerprint(value: JsonValue): string {
 }
 
 /**
- * The key that replaces one Rendobar has reported spent.
+ * The key that replaces one Rendobar reports spent.
  *
- * `POST /jobs` binds a key to exactly one job and keeps that binding after the
- * job ends. Once the job it created has stopped with a code Rendobar itself
- * calls retryable, the key can no longer do anything: it cannot hand back a
- * usable job and it cannot start a second one, so the API answers 409 and names
- * the job it is stuck on. The way out is a different key.
+ * `POST /jobs` binds a key to one job and keeps the binding after it ends. Once
+ * that job has stopped with a retryable code the key can do nothing: no usable
+ * job to hand back and no second job to start, so the API answers 409 naming it.
  *
- * Derived from the base key rather than from the previous one, so the chain
- * stays a constant length however many attempts walk it, and derived from the
- * job ID rather than from a counter or a random value, so it is a pure function
- * of what Rendobar just said. That is what keeps the guarantee the key exists
- * for: two deliveries of the SAME attempt see the same 409 naming the same job,
- * build the same replacement, and settle on one job — while two different
- * submissions still differ in the base key and can never meet here.
+ * Derived from the BASE key, not the previous one, so the chain stays a constant
+ * length however many attempts walk it, and from the job ID, not a counter or a
+ * random value, so it is a pure function of what Rendobar just said. That is what
+ * keeps the guarantee: two deliveries of the SAME attempt see the same 409, build
+ * the same replacement and settle on one job, while two different submissions
+ * differ in the base key and never meet here.
  */
 export function retryKeyFor(baseKey: string, boundJobId: string): string {
 	return `${baseKey}~${boundJobId}`;
 }
 
 /**
- * How many spent keys one pass of `execute` will walk past before it reports
- * the conflict instead.
+ * How many spent keys one pass of `execute` walks past before reporting the
+ * conflict.
  *
- * n8n hands a node no attempt number — `execute()` is re-invoked with an
- * identical signature and an identical `this` on every try of Retry On Fail, so
- * nothing the node can read distinguishes try 3 from try 1 (checked against
- * n8n-workflow 2.16.0: no `getTryIndex`, nothing per-attempt on `INode`,
- * `IExecuteData`, `ITaskData` or the expression proxy, and `$runIndex` counts
- * loop passes, not tries). What the node CAN read is the budget: `maxTries` is
- * on the node object.
+ * TRAP: n8n hands a node no attempt number. `execute()` is re-invoked with an
+ * identical signature and `this` on every try of Retry On Fail, so nothing
+ * distinguishes try 3 from try 1 (checked against n8n-workflow 2.16.0: no
+ * `getTryIndex`, nothing per-attempt on `INode`, `IExecuteData`, `ITaskData` or
+ * the expression proxy, and `$runIndex` counts loop passes, not tries). What is
+ * readable is `maxTries` on the node object.
  *
- * That budget is the right size. Try N of Retry On Fail rebuilds the same base
- * key, so it meets the job try 1 created, then the job try 2 created, and so on
- * — one hop per attempt already spent. Anything beyond the node's own retry
- * budget is not a case Retry On Fail can produce, so it is reported rather than
- * chased, and the ceiling keeps a hand-edited `maxTries` from turning one item
- * into an unbounded run of submissions.
- *
- * Retry On Fail off means no attempt can already be spent, so one try is all
- * this ever needs.
+ * That budget is the right size: try N rebuilds the same base key, so it meets
+ * the job try 1 created, then try 2's, one hop per attempt already spent.
+ * Anything beyond it is not a case Retry On Fail can produce, and the ceiling
+ * stops a hand-edited `maxTries` becoming an unbounded run of submissions. With
+ * Retry On Fail off no attempt can be spent, so one try is enough.
  */
 export function spentKeyBudget(node: INode): number {
 	if (node.retryOnFail !== true) return 1;
@@ -215,20 +202,17 @@ export function spentKeyBudget(node: INode): number {
 }
 
 /**
- * Submits one job, moving off an idempotency key Rendobar reports as spent.
+ * Submits one job, moving off an idempotency key Rendobar reports spent.
  *
- * `rendobarRequest` rather than `rendobarApiRequest`, because the 409 is data
- * here before it is a stop: it is the API telling us the key we chose is bound
- * to a job that stopped without ever reaching a runner, and that a resubmission
- * under it is impossible. Nothing is duplicated by moving off it — the job it
- * names produced no result and is over — so the deliberate retry the caller
- * asked for is granted under {@link retryKeyFor} instead of being reported as
- * something the workflow builder has to go and fix.
+ * `rendobarRequest` rather than `rendobarApiRequest` because the 409 is data
+ * before it is a stop: the key is bound to a job that stopped without reaching a
+ * runner, so no resubmission under it is possible. Moving off duplicates nothing,
+ * since that job produced no result and is over, so the retry is granted under
+ * {@link retryKeyFor} rather than reported.
  *
- * `budget` is what stops that being a licence to submit forever: one attempt
- * per key the caller could plausibly have spent, and no more. When it runs out,
- * or when the 409 is any other conflict, the response is raised with the copy
- * in ./shared/failure.
+ * `budget` caps it at one attempt per key the caller could plausibly have spent.
+ * Past that, or on any other conflict, the response is raised with the copy in
+ * ./shared/failure.
  */
 export async function submitJob(
 	this: IExecuteFunctions,
@@ -244,8 +228,8 @@ export async function submitJob(
 			method: 'POST',
 			path: '/jobs',
 			body: { ...submission, idempotencyKey },
-			// Safe to repeat: the key means a second delivery of THIS attempt
-			// settles on the job the first delivery created rather than a new one.
+			// Safe to repeat: the key makes a second delivery of THIS attempt settle
+			// on the job the first created.
 			idempotent: true,
 		});
 
@@ -266,11 +250,8 @@ export async function submitJob(
 }
 
 /**
- * How many of a page's usable rows still fit inside 'Limit'.
- *
- * The server is trusted to honour the limit that was asked for, but not relied
- * on: if it ever clamps or ignores it, the surplus is dropped here rather than
- * handed to the workflow.
+ * How many of a page's usable rows fit inside 'Limit'. The server is expected to
+ * honour it, but the surplus is dropped here if it ever clamps or ignores it.
  */
 export function roomFor(limit: number, taken: number, available: number): number {
 	if (limit === Infinity) return available;
@@ -278,12 +259,12 @@ export function roomFor(limit: number, taken: number, available: number): number
 }
 
 /**
- * Whether the last page was the end of the list.
+ * Whether the last page ended the list.
  *
- * `rowCount` is how many rows the API sent, NOT how many survived narrowing: a
- * row that is not an object still occupies an offset slot, so counting only the
- * usable ones would re-request it on the next page and read it twice — and
- * would end a Return All early, because a short page reads as the end.
+ * `rowCount` is how many rows the API sent, NOT how many survived narrowing. A
+ * non-object row still occupies an offset slot, so counting only usable rows
+ * would re-request it on the next page and would also end a Return All early,
+ * since a short page reads as the end.
  */
 export function pageExhausted(
 	rowCount: number,
@@ -295,25 +276,19 @@ export function pageExhausted(
 }
 
 /**
- * The rows of a page that have not been handed to the workflow already.
+ * The rows of a page not already handed to the workflow.
  *
- * `GET /jobs` pages by offset over an ordering that has no tiebreaker under it —
- * creation time alone — and jobs really are created inside the same
- * millisecond, so two page queries are free to order those rows differently and
- * put one of them in both pages. A job created while a Return All is still
- * walking the pages does the same thing from the other end, by pushing every row
- * behind it one slot along. Neither is something this node can correct from
- * here: it can only see a job it has already emitted, and refuse to emit it
- * twice. A row that moved the other way, out of the window between two requests,
- * is not recoverable at all — which is why the README does not call Return All a
- * snapshot, and points at 'Created Before' for a run that has to be exact.
+ * `GET /jobs` pages by offset over creation time with no tiebreaker, and jobs are
+ * created inside the same millisecond, so two page queries may order those rows
+ * differently and put one in both pages. A job created mid-walk does the same
+ * from the other end by pushing every row behind it one slot. This node can only
+ * see a job it has already emitted and refuse to emit it twice; a row that moved
+ * the other way, out of the window, is not recoverable, which is why the README
+ * points at 'Created Before' for a run that has to be exact.
  *
- * `seen` is not written here. The caller adds the IDs it actually emits, so a
- * row trimmed off by 'Limit' is not marked as delivered when it was not.
- *
- * A row whose `id` is not a string is kept: it cannot be recognised on a later
- * page either way, and dropping data because it could not be identified would be
- * worse than repeating it.
+ * `seen` is not written here: the caller adds the IDs it actually emits, so a row
+ * trimmed by 'Limit' is not marked delivered. A row whose `id` is not a string is
+ * kept, since it cannot be recognised on a later page either way.
  */
 export function unseenRows(rows: JsonObject[], seen: Set<string>): JsonObject[] {
 	return rows.filter((row) => {
@@ -325,17 +300,15 @@ export function unseenRows(rows: JsonObject[], seen: Set<string>): JsonObject[] 
 /**
  * The index of the pass this execution is on.
  *
- * On a normal execution `getExecuteData()` carries it. When the node runs as an
- * AI tool the context is n8n's supply-data shape, whose type does not include
- * `getExecuteData` at all — so calling it blind throws a TypeError before any
- * `?.` on the result could help. It is feature-detected instead.
+ * `getExecuteData()` carries it on a normal execution. As an AI tool the context
+ * is n8n's supply-data shape, whose type has no `getExecuteData` at all, so
+ * calling it blind throws a TypeError before `?.` could help. Feature-detected.
  *
- * `getNextRunIndex()`, which that context offers in its place, is deliberately
- * NOT used as a fallback: it reports where the next run would go, which is not
- * guaranteed to be the same value when n8n retries this step, and an unstable
- * component in the idempotency key would submit — and bill — a second job on
- * every retry. Falling back to 0 is safe because the submission fingerprint,
- * not the run index, is what separates two different requests.
+ * `getNextRunIndex()` is NOT used as a fallback: it reports where the next run
+ * would go, which is not guaranteed stable across an n8n retry, and an unstable
+ * component in the idempotency key would submit and bill a second job every time.
+ * Falling back to 0 is safe because the fingerprint, not the run index, separates
+ * two different requests.
  */
 export function currentRunIndex(context: IExecuteFunctions): number {
 	const readExecuteData = Reflect.get(context, 'getExecuteData');
@@ -349,11 +322,9 @@ export function currentRunIndex(context: IExecuteFunctions): number {
 }
 
 /**
- * Reads a Resource Locator parameter down to the identifier it points at.
- *
- * A workflow saved before the parameter became a locator stores a plain string.
- * Asking n8n to extract a value from that is at best a no-op, so extraction is
- * only requested when there is a locator object to extract from.
+ * A Resource Locator parameter down to the identifier it points at. A workflow
+ * saved before the parameter became a locator stores a plain string, so
+ * extraction is only requested when there is a locator object.
  */
 export function readLocator(context: IExecuteFunctions, name: string, itemIndex: number): unknown {
 	const raw = context.getNodeParameter(name, itemIndex, '');
@@ -362,24 +333,19 @@ export function readLocator(context: IExecuteFunctions, name: string, itemIndex:
 }
 
 /**
- * Reads a Create parameter that moved into the 'Options' collection in 0.5.0.
+ * A Create parameter that moved into the 'Options' collection in 0.5.0.
  *
- * Wait for Completion, Poll Interval, Max Wait, Callback URL, Callback Headers
- * and Idempotency Key used to sit at the top of the panel. Moving them into a
- * collection changes WHERE n8n stores them: a workflow saved on 0.3.0 or 0.4.0
- * has `maxWait` at the top level, a workflow built on 0.5.0 has it under
- * `options`. Both have to keep working, so this reads the new location first
- * and falls back to the old one.
+ * Moving a parameter into a collection changes WHERE n8n stores it: a workflow
+ * saved on 0.3.0 or 0.4.0 has `maxWait` at the top level, one built on 0.5.0 has
+ * it under `options`. Reads the new location first, falls back to the old.
  *
- * Absence in the collection is the signal to fall back, and it is reliable: a
- * collection only stores the keys the user actually added, so a key that is
- * there was set deliberately. That also makes the precedence right for a
- * half-migrated workflow, where the user has added one option and left the rest
- * where they were.
+ * Absence in the collection is a reliable fallback signal because a collection
+ * stores only the keys the user added, which also gets the precedence right for a
+ * half-migrated workflow.
  *
  * The fallback works even though the old parameters are no longer declared,
- * because `getNodeParameter` resolves against the saved workflow rather than
- * against this description.
+ * because `getNodeParameter` resolves against the SAVED WORKFLOW, not against
+ * this description.
  */
 export function readCreateOption<T>(
 	context: IExecuteFunctions,
@@ -431,29 +397,26 @@ function requireIdentifier(
 /**
  * Drops the mapped parameters n8n marks as unfilled.
  *
- * `null` is the resource mapper's own word for a field the user left empty —
- * it is what n8n writes for one, and what its editor prunes before saving. A
- * workflow assembled anywhere else, through the REST API or a builder, keeps
- * those nulls, and Rendobar refuses a null where it expects a number. Every
- * other value belongs to the user and goes out untouched, `0` included.
+ * `null` is the resource mapper's own word for an empty field, and its editor
+ * prunes them before saving. A workflow assembled through the REST API or a
+ * builder keeps them, and Rendobar refuses a null where it expects a number.
+ * Every other value goes out untouched, `0` included.
  */
 /**
- * Turn ResourceMapper keys back into the parameter names the API expects.
+ * ResourceMapper keys back to the parameter names the API expects.
  *
- * The mapper keys rows by the field's `key`, which is unique. The request has to
- * be built from `name`, which is not: `image.generate` has four `steps` fields
- * with different bounds, so their keys are `steps__<digest>`. The contract
- * guarantees `key` is `name` or `name__<digest>` and that no name contains
- * `__`, so the name is recoverable here without fetching the schema again on
- * every submission.
+ * The mapper keys rows by `key`, which is unique; the request is built from
+ * `name`, which is not (`image.generate` has four `steps` fields, keyed
+ * `steps__<digest>`). The contract guarantees `key` is `name` or `name__<digest>`
+ * and that no name contains `__`, so the name is recoverable without refetching
+ * the schema.
  */
 export function paramNamesFromKeys(params: JsonObject): JsonObject {
 	const named: JsonObject = {};
 	for (const [key, value] of Object.entries(params)) {
 		const name = /^(.+)__[0-9a-z]+$/.exec(key)?.[1] ?? key;
-		// Only one branch's fields are ever filled in, so a collision here would
-		// mean the form offered two variants at once. Last value wins, matching
-		// what the mapper itself would have done.
+		// Only one branch's fields are ever filled, so a collision would mean the
+		// form offered two variants at once. Last value wins, as the mapper would.
 		named[name] = value;
 	}
 	return named;
@@ -468,27 +431,24 @@ export function providedParams(params: JsonObject): JsonObject {
 }
 
 /**
- * The job's parameters, from whichever of the two editors is on show.
+ * The job's parameters, from whichever editor is showing.
  *
  * The form is built from the flat field list `GET /jobs/types/:type/schema`
- * projects, and a job type whose parameters are a union of shapes has no such
- * projection — the API returns no fields for it, and the form would submit an
- * empty object the API then rejects. 'Using JSON' is the way through, and it
- * also covers any job type added after this node was built.
+ * projects. A job type whose parameters are a union of shapes has no such
+ * projection, so the form would submit an empty object the API rejects; 'Using
+ * JSON' is the way through and also covers job types added after this release.
  *
- * What the form holds is sent as it stands. Deciding here which values look
- * deliberate is not open to us: n8n records nothing that separates a `0` the
- * user typed from one it filled in by itself, and `0` is a real setting for
- * several parameters. Keeping the form from acquiring a value nobody chose is
+ * What the form holds is sent as it stands. n8n records nothing that separates a
+ * `0` the user typed from one it filled in itself, and `0` is a real setting for
+ * several parameters, so keeping the form from acquiring an unchosen value is
  * `getJobFields`'s job instead.
  */
 /**
  * The media the job reads, from whichever half of the form is showing.
  *
- * The field form is built from the API's inputs descriptor, so an untouched
- * optional input arrives as an empty string and must be dropped rather than
- * sent: an empty `subtitles` would override the auto-extraction that omitting
- * it selects. An empty list is dropped for the same reason.
+ * An untouched optional input arrives as an empty string and must be dropped, not
+ * sent: an empty `subtitles` would override the auto-extraction that omitting it
+ * selects. An empty list goes the same way.
  */
 function readInputs(this: IExecuteFunctions, node: INode, itemIndex: number): JsonObject {
 	if (toIdentifier(this.getNodeParameter('inputsMode', itemIndex, 'fields')) !== 'json') {
@@ -533,12 +493,11 @@ function readParams(this: IExecuteFunctions, node: INode, itemIndex: number): Js
 	);
 }
 
-// ── Waiting ───────────────────────────────────────────────────────────────
+// Waiting
 
-// Poll GET /jobs/:id until the job reaches a terminal state or maxWait elapses.
-// Rendobar has no server-side wait endpoint and CF Workers can't hold a long
-// connection, so this polls client-side. It blocks the workflow, so it's meant
-// for short jobs; long jobs should use the Rendobar Trigger node instead.
+// Polls GET /jobs/:id until the job settles or maxWait elapses. Rendobar has no
+// server-side wait endpoint and CF Workers cannot hold a long connection, so this
+// is client-side. It blocks the workflow, so long jobs want the trigger instead.
 async function waitForJob(
 	this: IExecuteFunctions,
 	jobId: string,
@@ -584,16 +543,12 @@ async function waitForJob(
 	}
 }
 
-// ── Downloading ───────────────────────────────────────────────────────────
+// Downloading
 
 /**
- * The headline output file of a job, when it produced one.
- *
- * `file` comes straight from the API's unified output contract, so it is either
- * a file or null. It is read off the job rather than off the item, which may
- * have been narrowed by Output. Read in two places — the optional download on
- * Get, and the Download Output operation, which has to refuse when there is no
- * file rather than hand back an item with nothing on it.
+ * The headline output file of a job, when it produced one. Read off the job
+ * rather than the item, which Output may have narrowed. Used by the optional
+ * download on Get and by the Download Output operation.
  */
 export function headlineOutputFile(job: JsonObject): JsonObject | undefined {
 	const file = objectAt(objectAt(job, 'output'), 'file');
@@ -601,11 +556,9 @@ export function headlineOutputFile(job: JsonObject): JsonObject | undefined {
 }
 
 /**
- * The stop for a Download Output that has nothing to download.
- *
- * `retryable` follows the job's status rather than being fixed: a job still on
- * its way to a result may well have a file on the next pass, while a job that
- * computes data rather than a file never will, however many times it is asked.
+ * The stop for a Download Output with nothing to download. `retryable` follows
+ * the job's status: a job still on its way may have a file next pass, one that
+ * computes data rather than a file never will.
  */
 export function noOutputFile(
 	node: INode,
@@ -615,10 +568,9 @@ export function noOutputFile(
 ): Error {
 	const status = stringAt(job, 'status');
 	const message = withItemMarker(`Job ${jobId} has no output file to download`, itemIndex);
-	// The status is deliberately not quoted into this line. Rendobar's own word
-	// for a stopped job is one the n8n copy guidelines rule out of a message, and
-	// the three reasons below cover every state anyway. The Get operation shows
-	// which one applies.
+	// The status is not quoted in: Rendobar's word for a stopped job is one the
+	// n8n copy guidelines ban from a message, and the three reasons cover every
+	// state. Get shows which applies.
 	const description =
 		"A file is on a job once it has completed and produced one. A job still on its way to a result has none yet. A job type that computes data rather than a file, such as ffprobe, never produces one at all and puts its result under 'data' instead. And a job whose retention window has passed has had its files removed. Run the Get operation on the same job to see which of those this is.";
 
@@ -632,15 +584,14 @@ export function noOutputFile(
 }
 
 /**
- * The execution log a job left behind, or an empty list when it left none.
+ * The execution log a job left, or an empty list when it left none.
  *
- * `GET /jobs/:id/logs` answers 404 for a job with no logs, which is not a stop:
- * a job that never reached a runner reported nothing, and a job whose retention
- * window has passed had its logs swept along with its files while the flag on
- * the job stayed set. Both are "there are none", and an empty list says so
- * without ending the workflow at exactly the point someone is trying to find
- * out why a job stopped. A 404 naming the job itself cannot arrive here — the
- * caller has already read the job, so the job exists.
+ * `GET /jobs/:id/logs` answers 404 for a job with no logs, which is not a stop: a
+ * job that never reached a runner reported nothing, and a job past its retention
+ * window had its logs swept with its files while the flag stayed set. Both mean
+ * "there are none", and an empty list says so without ending the workflow at the
+ * point someone is finding out why a job stopped. A 404 for a missing job cannot
+ * arrive here, since the caller already read the job.
  */
 export async function readJobLogs(
 	this: IExecuteFunctions,
@@ -678,10 +629,10 @@ async function attachOutputFile(
 	const url = stringAt(file, 'url');
 	if (url === undefined) return;
 
-	// `encoding: 'stream'` hands back the response body as it arrives, and
-	// `prepareBinaryData` writes it straight to n8n's binary store. Buffering it
-	// instead would put the whole file — up to the plan's 10 GB input ceiling —
-	// on the heap and defeat the filesystem-backed binary mode.
+	// `encoding: 'stream'` hands back the body as it arrives and
+	// `prepareBinaryData` writes it straight to n8n's binary store. Buffering
+	// would put the whole file, up to the plan's 10 GB ceiling, on the heap and
+	// defeat the filesystem-backed binary mode.
 	const response = (await this.helpers.httpRequest({
 		method: 'GET',
 		url,
@@ -694,16 +645,14 @@ async function attachOutputFile(
 	})) as { statusCode: number; body: BinaryPayload };
 
 	if (response.statusCode < 200 || response.statusCode >= 300) {
-		// The body is an open stream even on a rejection. Leaving it dangling
-		// holds the socket until the process notices, so it is closed here before
-		// the throw unwinds.
+		// The body is an open stream even on a rejection, and a dangling one holds
+		// the socket, so it is closed before the throw unwinds.
 		if (!Buffer.isBuffer(response.body)) response.body.destroy();
 
 		const jobId = stringAt(job, 'id') ?? 'this job';
 		const details = failureFromResponse(response.statusCode, null);
-		// A rejection means the link is spent; a stall on the storage side is
-		// transient and worth simply running again. `retryable` already reflects
-		// which one this is, so the advice should match it.
+		// A rejection means the link is spent; a storage-side stall is transient.
+		// `retryable` already says which, so the advice matches it.
 		const transient = response.statusCode >= 500;
 		throw apiError(
 			this.getNode(),
@@ -835,9 +784,8 @@ export class Rendobar implements INodeType {
 				displayOptions: { show: { resource: ['account'] } },
 				options: [
 					{
-						// `getAccount` rather than `get`, because `execute` dispatches on
-						// the operation alone and two resources sharing a value would send
-						// one to the other's branch.
+						// `getAccount`, not `get`: `execute` dispatches on the operation
+						// alone, so two resources sharing a value would cross branches.
 						name: 'Get',
 						value: 'getAccount',
 						action: 'Get account',
@@ -979,7 +927,7 @@ export class Rendobar implements INodeType {
 				},
 				placeholder: 'e.g. { "schemaVersion": "1.0", "prompt": "a 15 second product tour" }',
 				description:
-					"The settings for the chosen job type, as a JSON object. Use this for job types whose settings are a choice between shapes, such as Compose, Image Generate and Image Edit, and for anything the form cannot express. See the parameter reference at https://rendobar.com/docs.",
+					'The settings for the chosen job type, as a JSON object. Compose, Image Generate and Image Edit need this, as does anything the form cannot express. See https://rendobar.com/docs.',
 			},
 			{
 				displayName: 'Options',
@@ -988,10 +936,8 @@ export class Rendobar implements INodeType {
 				placeholder: 'Add Option',
 				default: {},
 				displayOptions: { show: { resource: ['job'], operation: ['create'] } },
-				// No description on purpose. n8n's own collections carry none, because
-				// the placeholder and the child fields already say what this is, and a
-				// description here would be the restate-the-label filler the copy rules
-				// warn about.
+				// No description: n8n's own collections carry none, and the placeholder
+				// and child fields already say what this is.
 				options: [
 				{
 					displayName: 'Callback Headers',
@@ -1001,7 +947,7 @@ export class Rendobar implements INodeType {
 					default: {},
 					placeholder: 'Add Header',
 					description:
-						"Headers to send with the callback, so the receiver can tell a genuine call apart from anything else that finds the address. On a Wait node, match these to its own Header Auth credential. Names beginning with X-Rendobar- are kept for Rendobar's own delivery details.",
+						"Headers to send with the callback, so the receiver can check that the call came from Rendobar. Names beginning with X-Rendobar- are reserved.",
 					options: [
 						{
 							displayName: 'Header',
@@ -1034,8 +980,7 @@ export class Rendobar implements INodeType {
 					default: '',
 					placeholder: 'e.g. {{ $execution.resumeUrl }}',
 					description:
-						"Where Rendobar sends the finished job. Put a Wait node set to 'On Webhook Call' after this one and use its resume URL here. n8n then parks the execution instead of holding it open, so a job running for hours occupies no worker and needs no polling. Turn 'Wait for Completion' off when you use this. Leave empty to send nothing.",
-					hint: "Set the Wait node's HTTP Method to POST, which is not its default, and switch on its 'Limit Wait Time'. Rendobar posts the job on every ending, including one that stopped or was cancelled, but a call it cannot deliver is retried only five times over about five minutes — after that the parked execution has only that limit to release it.",
+						"Where Rendobar sends the finished job. Use a Wait node's resume URL here and n8n parks the execution instead of holding a worker open. Turn 'Wait for Completion' off when you use this.",
 				},
 				{
 					displayName: 'Idempotency Key',
@@ -1044,8 +989,7 @@ export class Rendobar implements INodeType {
 					default: '',
 					placeholder: 'e.g. order-4417',
 					description:
-						'What makes this submission the same submission. Rendobar keeps one job per key, so a repeat under a key it has seen returns the original job instead of charging for a second one. Leave empty and the node builds a key from the execution, the node, the run, the item and the values being submitted, which covers a repeat inside one execution. Set it to tie the job to something of your own that outlives an execution, such as an order number, and give every distinct submission its own value.',
-					hint: 'A key is bound to one job for good. Once that job has stopped without producing anything, only a different key can submit again — so if you retry deliberately, make sure this changes, for example by ending it in {{ $runIndex }}.',
+						'A value that identifies this submission. Rendobar returns the original job for a key it has already seen instead of charging for a second one. Leave empty and the node derives one per item.',
 				},
 				{
 					displayName: 'Max Wait (Seconds)',
@@ -1070,7 +1014,7 @@ export class Rendobar implements INodeType {
 					type: 'boolean',
 					default: false,
 					description:
-						"Whether to hold the execution open until the job finishes and return its result. Suits jobs of a few minutes. For anything longer use 'Callback URL' with a Wait node, which parks the execution instead of holding a worker. The two are alternatives: leave this off whenever 'Callback URL' is set, because a call that arrives while this node is polling cannot be answered.",
+						"Whether to hold the execution open until the job finishes and return its result. Suits jobs of a few minutes; for longer ones use 'Callback URL' instead, and leave this off when you do.",
 				},
 				],
 			},
@@ -1149,11 +1093,9 @@ export class Rendobar implements INodeType {
 				description: 'Name of the output field to put the downloaded file in',
 			},
 			{
-				// A second parameter rather than a wider gate on the one above.
-				// `displayOptions.show` ANDs its keys, so "Get with the switch on, OR
-				// Download Output" cannot be written as one rule, and relaxing the
-				// switch out of the rule would leave a field on the Get panel that
-				// does nothing whenever the switch is off.
+				// A second parameter, not a wider gate: `displayOptions.show` ANDs its
+				// keys, so "Get with the switch on, OR Download Output" cannot be one
+				// rule, and dropping the switch from it would leave a dead field on Get.
 				displayName: 'Output Binary Field',
 				name: 'downloadBinaryProperty',
 				type: 'string',
@@ -1169,7 +1111,6 @@ export class Rendobar implements INodeType {
 				default: false,
 				displayOptions: { show: { resource: ['job'], operation: ['getAll'] } },
 				description: 'Whether to return all results or only up to a given limit',
-				hint: "Pages are read one after another, so a job created while this runs can shift the later ones. Duplicates are removed, but a job can still slip past the window. Set 'Created Before' under Filters when the list has to be exact.",
 			},
 			{
 				displayName: 'Limit',
@@ -1278,7 +1219,6 @@ export class Rendobar implements INodeType {
 				required: true,
 				displayOptions: { show: { resource: ['file'], operation: ['upload'] } },
 				placeholder: 'e.g. data',
-				hint: 'The name of the input field holding the file to send',
 				description: 'Name of the field from a previous node that holds the file to send',
 			},
 			{
@@ -1296,15 +1236,13 @@ export class Rendobar implements INodeType {
 				name: 'output',
 				type: 'options',
 				default: 'simplified',
-				// Hidden on Get Logs: the item there is a log entry, not a job, so both
-				// this projection and the field list below would describe the wrong
-				// record. Hiding a parameter does not clear it and `getNodeParameter`
-				// still hands back whatever was stored, so the safety here is not the
-				// hiding: it is that Get Logs builds its own item and never applies
-				// either value to it.
+				// Hidden on Get Logs, whose item is a log entry rather than a job, so
+				// this projection and the field list would describe the wrong record.
+				// TRAP: hiding does not clear a parameter and `getNodeParameter` still
+				// returns it. The safety is that Get Logs builds its own item.
 				displayOptions: { show: { resource: ['job'] }, hide: { operation: ['getLogs'] } },
 				description:
-					'How much of the job to put on the item. A raw job carries around 33 fields, which is more than most workflows need and more than an AI agent can usefully read.',
+					'How much of the job to put on the item',
 				options: [
 					{
 						name: 'Raw',
@@ -1343,7 +1281,7 @@ export class Rendobar implements INodeType {
 				default: 'simplified',
 				displayOptions: { show: { resource: ['file'] } },
 				description:
-					'How much of the stored file to put on the item. A raw record carries 21 fields, most of which describe how Rendobar stores it rather than anything a workflow acts on.',
+					'How much of the stored file to put on the item',
 				options: [
 					{
 						name: 'Raw',
@@ -1382,10 +1320,10 @@ export class Rendobar implements INodeType {
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
 		const items = this.getInputData();
-		// Branch on `operation` rather than `resource`: operation values are unique
-		// across resources, so workflows saved before the Resource selector existed
-		// keep executing unchanged. That uniqueness is what `getAccount` exists for
-		// rather than a second `get`, and test/node-description.test.js pins it.
+		// Branch on `operation`, not `resource`: operation values are unique across
+		// resources, so workflows saved before the Resource selector existed keep
+		// running. That uniqueness is why `getAccount` is not a second `get`, and
+		// test/node-description.test.js pins it.
 		const operation = toIdentifier(this.getNodeParameter('operation', 0));
 		const executionId = this.getExecutionId();
 		const node = this.getNode();
@@ -1404,19 +1342,15 @@ export class Rendobar implements INodeType {
 						? toStringList(this.getNodeParameter(fieldsParameter, i, []))
 						: [];
 
-				// Read for every operation, applied only by the ones that emit a job or
-				// an asset. Get Logs and the Account resource build their own item, so
-				// a value left behind by an earlier operation cannot reach them.
+				// Read for every operation, applied only by those emitting a job or an
+				// asset. Get Logs and Account build their own item.
 				if (operation === 'getAccount') {
-					// One operation, and it reads state rather than usage. The asymmetry
-					// worth closing is that `balance.depleted` and `balance.low` can start
-					// a workflow which then cannot ask how low: `GET /billing/state`
-					// answers that and carries the plan limits a submission can be checked
-					// against, while `GET /billing/usage` carries no balance at all and
-					// answers a reporting question — a per-job-type map plus one row per
-					// date and job type, growing with the account's history. That is a
-					// chart rather than something a workflow branches on, and Custom API
-					// Call already reaches it.
+					// State, not usage. `balance.depleted` and `balance.low` can start a
+					// workflow that then needs to ask how low; `GET /billing/state`
+					// answers that and carries the plan limits. `GET /billing/usage`
+					// carries no balance and returns a per-job-type map plus one row per
+					// date, which is a chart rather than something to branch on. Custom
+					// API Call reaches it for anyone who wants it.
 					const account = await rendobarApiRequest.call(
 						this,
 						{ method: 'GET', path: '/billing/state', idempotent: true },
@@ -1429,13 +1363,10 @@ export class Rendobar implements INodeType {
 				if (operation === 'getLogs') {
 					const jobId = requireIdentifier(node, readLocator(this, 'jobId', i), 'Job', i);
 
-					// The job is read first, and not for decoration. `GET /jobs/:id/logs`
-					// answers 404 both for a job that does not exist and for a job that has
-					// no logs, and the only thing separating them is the sentence in the
-					// body — so reading the job settles it structurally instead. A job ID
-					// nobody meant to type stops the item here, with the copy that fits; a
-					// job with nothing to show hands back an empty list, which is what
-					// someone reacting to `job.failed` needs rather than a stop.
+					// The job is read first because `GET /jobs/:id/logs` answers 404 both
+					// for a missing job and for a job with no logs, separated only by the
+					// sentence in the body. Reading the job settles it structurally: a bad
+					// ID stops here, a job with nothing to show returns an empty list.
 					const response = await rendobarApiRequest.call(
 						this,
 						{ method: 'GET', path: `/jobs/${encodeURIComponent(jobId)}`, idempotent: true },
@@ -1443,11 +1374,10 @@ export class Rendobar implements INodeType {
 					);
 					const job = unwrapData(response) ?? {};
 
-					// `logsAvailable` is the API's own flag for whether a runner ever
-					// reported any, so a definite `false` saves the second call outright.
-					// It is not trusted the other way: anything else asks, and an absent
-					// flag then costs a 404 rather than silently reporting a job's logs as
-					// empty.
+					// `logsAvailable` is the API's flag for whether a runner reported any,
+					// so a definite `false` skips the second call. Not trusted the other
+					// way: anything else asks, and an absent flag costs a 404 rather than
+					// silently reporting logs as empty.
 					const logs =
 						booleanAt(job, 'logsAvailable') === false
 							? []
@@ -1469,9 +1399,8 @@ export class Rendobar implements INodeType {
 					const filters = this.getNodeParameter('filters', i, {});
 					const sort = this.getNodeParameter('sort', i, {});
 
-					// Read raw rather than as a string: an expression can resolve a date
-					// filter to a number of milliseconds, and narrowing to string first
-					// would drop it without a word.
+					// Read raw, not as a string: an expression can resolve a date filter to
+					// milliseconds, which narrowing to string would silently drop.
 					const readDate = (name: string, displayName: string): number | undefined => {
 						const raw = readValue(filters, name);
 						if (raw === undefined || raw === null || raw === '') return undefined;
@@ -1507,8 +1436,8 @@ export class Rendobar implements INodeType {
 
 					let offset = 0;
 					let taken = 0;
-					// Every job ID already pushed, so a row that two offset pages both
-					// claim is returned once. Bounded by what `returnData` already holds.
+					// Every job ID already pushed, so a row two offset pages both claim is
+					// returned once.
 					const seen = new Set<string>();
 					for (;;) {
 						const pageSize = Math.min(
@@ -1525,10 +1454,9 @@ export class Rendobar implements INodeType {
 							},
 							i,
 						);
-						// Paging is driven by the raw row count, not by how many rows
-						// survived narrowing: a row the API sent that is not an object
-						// still occupies an offset slot, so counting only the usable ones
-						// would re-request it on the next page and read it twice.
+						// Paging is driven by the raw row count: a non-object row still
+						// occupies an offset slot, so counting only usable rows would
+						// re-request it on the next page.
 						const rows = arrayAt(page, 'data') ?? [];
 						const jobs = unseenRows(rows.filter(isJsonObject), seen);
 
@@ -1549,8 +1477,8 @@ export class Rendobar implements INodeType {
 				}
 
 				let job: JsonObject;
-				// Named outside the branch below so the Download Output stop can quote
-				// the job the user asked for, whatever the response turned out to hold.
+				// Named outside the branch so the Download Output stop can quote the job
+				// the user asked for, whatever the response held.
 				let jobIdentifier = '';
 
 				if (operation === 'create') {
@@ -1573,8 +1501,8 @@ export class Rendobar implements INodeType {
 
 					const waitForCompletion = readCreateOption(this, 'waitForCompletion', i, false) === true;
 
-					// Before the submission, not after: a job submitted under a pairing
-					// whose result can never be collected is a job billed for nothing.
+					// Before the submission: a job whose result can never be collected is
+					// billed for nothing.
 					const clash = waitAndCallbackConflict(callback.callback !== undefined, waitForCompletion);
 					if (clash !== undefined) {
 						throw invalidParameter(node, clash.parameter, clash.what, clash.how, i);
@@ -1584,40 +1512,30 @@ export class Rendobar implements INodeType {
 						type: jobType,
 						inputs: media,
 						params: readParams.call(this, node, i),
-						// Part of the submission, and so part of the fingerprint behind the
-						// idempotency key: two jobs that differ only in where the result is
-						// delivered are two different requests, and `POST /jobs` registers
-						// the callback only for a freshly admitted job.
+						// Part of the submission, so part of the fingerprint behind the
+						// idempotency key: two jobs differing only in delivery address are
+						// two requests, and `POST /jobs` registers the callback only for a
+						// freshly admitted job.
 						...(callback.callback === undefined ? {} : { callback: callback.callback }),
 					};
 
-					// The key has to be stable across n8n's retry of this step (so a
-					// transient stall doesn't charge twice) AND different for every
-					// distinct submission. `POST /jobs` looks a repeated key up on
-					// (org, key) alone and never compares payloads, so a colliding key
-					// silently hands back the FIRST job instead of refusing.
+					// The key must be stable across n8n's retry of this step, so a stall
+					// does not charge twice, AND different for every distinct submission.
+					// TRAP: `POST /jobs` looks a repeated key up on (org, key) alone and
+					// never compares payloads, so a colliding key silently returns the
+					// FIRST job.
 					//
-					// Execution, node, run and item separate the ordinary cases: two
-					// Rendobar nodes in one workflow, the passes of a Loop Over Items,
-					// and the items of one pass. They are not enough on their own,
-					// because this node is `usableAsTool`: an agent calling it twice in
-					// one execution can present the same execution, node, run and item
-					// for two completely different requests, and the second would come
-					// back as the first job's result with its own parameters discarded.
+					// Execution, node, run and item cover two nodes in one workflow, the
+					// passes of a Loop Over Items, and the items of one pass. Not enough
+					// alone: the node is `usableAsTool`, and an agent calling it twice in
+					// one execution presents all four identically for two different
+					// requests. The fingerprint separates those while a retry of the same
+					// request rebuilds the same submission and keeps the same key.
 					//
-					// The fingerprint closes that: different requests fingerprint
-					// differently, while a retry of the same request rebuilds the same
-					// submission and so keeps the same key. Two genuinely identical
-					// requests still collapse onto one job, which is the behaviour
-					// idempotency is for.
-					//
-					// Every component of that is stable inside one execution, which is
-					// deliberate and is also why it cannot be the whole answer: a
-					// DELIBERATE retry of the same submission rebuilds the same key, and
-					// Rendobar refuses a key whose job stopped without ever running.
-					// The 'Idempotency Key' parameter is the lever for that, and
-					// submitJob walks off a key the node picked itself once Rendobar
-					// says it is spent.
+					// Every component is stable inside one execution, so a DELIBERATE
+					// retry rebuilds the same key and Rendobar refuses one whose job
+					// stopped without running. 'Idempotency Key' is the lever, and
+					// submitJob walks off a key the node picked itself.
 					const chosenKey = toIdentifier(readCreateOption(this, 'idempotencyKey', i, ''));
 					const idempotencyKey =
 						chosenKey === ''
@@ -1628,11 +1546,9 @@ export class Rendobar implements INodeType {
 						this,
 						submission,
 						idempotencyKey,
-						// The node may replace a key it invented. It must not invent a
-						// variant of one the user asserted: a key set by hand is a promise
-						// about which submissions are the same submission, and only its
-						// author knows what changing it would mean. That conflict is
-						// reported, with the copy that names this parameter.
+						// The node may replace a key it invented, never one the user set: a
+						// hand-written key is a statement about which submissions are the
+						// same, and only its author knows what changing it means.
 						chosenKey === '' ? spentKeyBudget(node) : 1,
 						i,
 					);
@@ -1644,7 +1560,7 @@ export class Rendobar implements INodeType {
 						const jobId = stringAt(job, 'id');
 						if (jobId === undefined) {
 							// Waiting was asked for and cannot be done, so say so rather than
-							// handing back a job that has not finished as though it had.
+							// return an unfinished job as though it had finished.
 							throw invalidParameter(
 								node,
 								'Wait for Completion',
@@ -1703,14 +1619,10 @@ export class Rendobar implements INodeType {
 
 				const item = buildJobItem(job, i, outputMode, outputFields);
 
-				// Both routes to a file go through `attachOutputFile`, which streams the
-				// response into n8n's binary store and closes it when the link answers a
-				// non-2xx. What separates them is what a missing file means.
-				//
-				// On Get the file is an extra, so a job that produced none simply arrives
-				// without one. On Download Output the file IS the operation, so the same
-				// silence would hand back an item that looks like a download and carries
-				// nothing.
+				// Both routes go through `attachOutputFile`. What differs is what a
+				// missing file means: on Get it is an extra, so the job arrives without
+				// one; on Download Output it IS the operation, so silence would return an
+				// item that looks like a download and carries nothing.
 				if (operation === 'download') {
 					if (headlineOutputFile(job) === undefined) {
 						throw noOutputFile(node, job, stringAt(job, 'id') ?? jobIdentifier, i);
@@ -1737,8 +1649,8 @@ export class Rendobar implements INodeType {
 
 				returnData.push(item);
 			} catch (error) {
-				// One shape for every operation: the message n8n would have shown,
-				// plus the fields an If or Switch node can route on.
+				// One shape for every operation: the message n8n would have shown, plus
+				// the fields an If or Switch node can route on.
 				const details = describeFailure(error);
 
 				if (this.continueOnFail()) {
@@ -1746,9 +1658,8 @@ export class Rendobar implements INodeType {
 					continue;
 				}
 
-				// Every branch above already raises a well-formed n8n error, and
-				// re-wrapping one would bury its message. Anything else reaching here
-				// is a defect in this node rather than an answer from Rendobar.
+				// Every branch above raises a well-formed n8n error and re-wrapping would
+				// bury its message. Anything else here is a defect in this node.
 				throw error instanceof NodeApiError || error instanceof NodeOperationError
 					? error
 					: new NodeOperationError(node, withItemMarker(details.message, i), {

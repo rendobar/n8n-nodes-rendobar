@@ -248,7 +248,7 @@ test('Get Many offers sorting in its own collection below Filters', () => {
 });
 
 test('a single item is chosen through a Resource Locator defaulting to the list', () => {
-	// Both Job Type and Job pick exactly one thing, which is what the guidelines
+	// Both Job Type and Job pick exactly one thing, which the guidelines
 	// say a Resource Locator is for, and the default mode has to be From List.
 	const locators = properties.filter((property) => property.type === 'resourceLocator');
 	assert.deepEqual(
@@ -382,11 +382,46 @@ test('display names are title case and descriptions are sentence case', () => {
 				`display name "${property.displayName}" should spell ID/URL in capitals`,
 			);
 		}
-		for (const copy of [property.description, property.hint]) {
-			if (typeof copy === 'string' && copy.length > 0) {
-				assert.match(copy, /^[A-Z]/, `"${copy}" should read as a sentence`);
-			}
+		const { description: copy } = property;
+		if (typeof copy === 'string' && copy.length > 0) {
+			assert.match(copy, /^[A-Z]/, `"${copy}" should read as a sentence`);
 		}
+	}
+});
+
+test('no parameter carries a hint', () => {
+	// Verification review, round 2: "are the hints really needed when the
+	// description should cover it?". They were paragraph-length caveats sitting
+	// under fields whose description already said what the field does, and every
+	// one of them is covered at length in the README. A hint that repeats the
+	// description is noise; a hint that adds a caveat the description does not
+	// carry is documentation in the wrong place.
+	const trigger = allProperties(new RendobarTrigger().description.properties);
+	const withHints = [...everyProperty, ...trigger].filter(
+		(property) => property.hint !== undefined,
+	);
+	assert.deepEqual(
+		withHints.map((property) => property.displayName),
+		[],
+		'put the wording in the description, or in the README',
+	);
+});
+
+test('no parameter description runs past a paragraph', () => {
+	// The same review note that took the hints out applies to a description that
+	// has grown into one. Idempotency Key was 490 characters, Wait for Completion
+	// 369, and each of them rendered as a block of grey text under a field inside
+	// a collection. The cap is above the longest that survived the trim, so it
+	// blocks a relapse rather than forcing a rewrite of what is there.
+	const LIMIT = 220;
+	const trigger = allProperties(new RendobarTrigger().description.properties);
+	for (const property of [...everyProperty, ...trigger]) {
+		const { description: copy } = property;
+		if (typeof copy !== 'string') continue;
+		assert.ok(
+			copy.length <= LIMIT,
+			`"${property.displayName ?? property.name}" description is ${copy.length} characters; put the detail in the README`,
+		);
 	}
 });
 

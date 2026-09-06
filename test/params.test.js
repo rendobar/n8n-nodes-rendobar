@@ -1,5 +1,5 @@
-// Three of the nine job types Rendobar serves today — compose, image.generate
-// and image.edit — describe their parameters as a choice between shapes, and
+// Three of the nine job types Rendobar serves today, compose, image.generate
+// and image.edit, describe their parameters as a choice between shapes, and
 // the flat field list `GET /jobs/types/:type/schema` projects comes back empty
 // for them. Without the JSON editor the form submits {} and the API refuses the
 // job, with nothing in the panel to fill in. These pin the two halves of the
@@ -113,19 +113,18 @@ test('the parameter editors sit between Job Type and Options', () => {
 	);
 });
 
-// ── Parameters nobody filled in ───────────────────────────────────────────
+// Parameters nobody filled in.
 //
-// n8n draws a number field with element-plus's InputNumber, which turns the
-// empty input into 0 as it mounts and writes that back into the mapped value.
-// Opening the panel was enough to do it: `ffprobe` came back "Invalid job
-// parameters: Too small: expected number to be >0" for a Timeout nobody had
-// touched, and a fresh `image.upscale` node arrived carrying seed 0, which the
-// API accepts and which quietly pins a generation meant to stay random.
+// n8n draws a number field with element-plus InputNumber, which turns the empty
+// input into 0 as it mounts and writes that into the mapped value. Opening the
+// panel was enough: `ffprobe` returned "Invalid job parameters: Too small:
+// expected number to be >0" for an untouched Timeout, and a fresh
+// `image.upscale` node carried seed 0, which the API accepts and which pins a
+// generation meant to stay random.
 //
-// Nothing n8n saves separates that 0 from one the user typed — the schema entry
-// beside it is identical either way — so these pin the only fix that can hold:
-// a field n8n would fill in by itself is offered rather than drawn, and
-// whatever the form does hold is sent exactly as it stands.
+// Nothing n8n saves separates that 0 from a typed one, so these pin the fix: a
+// field n8n would fill in itself is offered rather than drawn, and what the form
+// holds is sent as it stands.
 
 const { toMapperField } = require('../dist/nodes/Rendobar/methods/getJobFields.js');
 const { providedParams } = require('../dist/nodes/Rendobar/Rendobar.node.js');
@@ -162,7 +161,7 @@ test('a number the job type does give a default for stays on the form', () => {
 
 test('only numbers start unmapped', () => {
 	// Every other kind of input renders empty and stays empty. `command` is also
-	// required, and a required field must never be hidden — n8n gives no way to
+	// required, and a required field must never be hidden, n8n gives no way to
 	// bring it back.
 	assert.equal(toMapperField(ffprobeFields[0]).removed, undefined);
 	assert.equal(toMapperField(upscaleFields[3]).removed, undefined);

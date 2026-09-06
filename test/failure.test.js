@@ -314,8 +314,8 @@ test('a spent idempotency key says which job holds it and which parameter moves 
 	// stopped without reaching a runner. Rendobar's own message ends "Retry with
 	// a new idempotency key", which is right for a client that mints its own and
 	// useless to a workflow builder who has never seen one: this node generates
-	// it. So the node writes the headline, and it has to carry three things —
-	// which job the key went to, that the job produced nothing, and what to do.
+	// it. So the node writes the headline, carrying three things: which job the key
+	// went to, that the job produced nothing, and what to do.
 	const details = failureFromResponse(409, {
 		error: {
 			code: 'CONFLICT',
