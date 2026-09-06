@@ -60,10 +60,10 @@ const waitingJob = { id: 'job_waiting', type: 'ffmpeg', status: 'waiting', creat
 const cancelledJob = { id: 'job_cancelled', type: 'ffmpeg', status: 'cancelled', createdAt: 1, completedAt: 3 };
 
 test("no job status produces a simplified item above n8n's ten-field ceiling", () => {
-	// The field list is longer than ten on purpose: Rendobar's job response is a
+	// The field list is longer than ten because Rendobar's job response is a
 	// discriminated union, so the output fields and `error` are mutually
 	// exclusive. What has to stay within ten is the item, and that is what this
-	// walks — every status the API can return.
+	// walks, every status the API can return.
 	for (const job of [completedJob, failedJob, runningJob, waitingJob, cancelledJob]) {
 		const json = buildJobJson(job, 'simplified');
 		assert.ok(

@@ -1,21 +1,16 @@
 import type { INodeExecutionData } from 'n8n-workflow';
 import { objectAt, type JsonObject } from './json';
 
-// How much of a job to put on the item. The node is `usableAsTool`, so n8n's
-// UX guidelines require the three-mode `Output` parameter rather than a plain
-// `Simplify` boolean: an unfiltered job carries ~33 top-level fields, which
-// blows out an agent's context window for no benefit.
+// The node is `usableAsTool`, so n8n's UX guidelines require the three-mode
+// `Output` parameter rather than a `Simplify` boolean.
 export type OutputMode = 'simplified' | 'raw' | 'selected';
 
-// The projection behind Output -> Simplified. `data`/`file`/`files`/`expiresAt`
-// come from the unified output contract, `error` from the failure contract, and
-// the rest are the fields a workflow actually branches on.
+// The projection behind Output -> Simplified.
 //
-// The list holds eleven names but an item never holds eleven fields: Rendobar's
-// job response is a discriminated union on `status`, so `output` (and with it
-// `data`/`file`/`files`/`expiresAt`) exists only on a complete job and `error`
-// only on a failed one. `pickJobFields` keeps whichever the job actually has,
-// which tops out at ten. `test/output.test.js` pins that for every status.
+// Eleven names, but an item never holds eleven fields: the job response is a
+// union on `status`, so `data`/`file`/`files`/`expiresAt` exist only on a
+// complete job and `error` only on a failed one. `pickJobFields` keeps whichever
+// is present, which tops out at ten. `test/output.test.js` pins it per status.
 export const SIMPLIFIED_FIELDS = [
 	'id',
 	'type',
@@ -76,9 +71,7 @@ export const JOB_FIELDS = [
 	'webUrl',
 ] as const;
 
-// The same three modes for the File resource. An asset carries 21 fields, most
-// of which describe how Rendobar stores the file rather than anything a
-// workflow acts on, so the default keeps the ones that matter: where the file
+// The same three modes for the File resource. The default keeps where the file
 // is, what it is, and how long the link lasts.
 export const SIMPLIFIED_ASSET_FIELDS = [
 	'id',
@@ -118,16 +111,13 @@ export const ASSET_FIELDS = [
 	'url',
 ] as const;
 
-// Every Rendobar job, for every job type, returns ONE output shape when it
-// completes:
-//   data      — job-type-specific computed result (probe/detections/transcript),
-//               or null for file-only jobs.
-//   file      — the headline result: a single output file OR a stream manifest
-//               (.m3u8/.mpd). Always one of `files`. Null for data-only jobs/sets.
-//   files     — every produced file, the complete list. [] for data-only jobs.
-//   expiresAt — Unix ms when the file URLs expire, or null when there are none.
-// Lifting them to the top of the item gives downstream nodes clean, predictable
-// fields without digging into `output` (and without narrowing per job type).
+// One output shape for every job type on completion, lifted to the top of the
+// item so downstream nodes need no per-job-type narrowing:
+//   data      job-type-specific computed result, null for file-only jobs.
+//   file      headline result: one output file or a stream manifest
+//             (.m3u8/.mpd), always one of `files`. Null for data-only jobs.
+//   files     every produced file. [] for data-only jobs.
+//   expiresAt Unix ms when the file URLs expire, null when there are none.
 export function liftJobOutput(job: JsonObject): JsonObject {
 	const json: JsonObject = { ...job };
 	const output = objectAt(job, 'output');
@@ -140,8 +130,8 @@ export function liftJobOutput(job: JsonObject): JsonObject {
 	return json;
 }
 
-// Keeps only the requested keys, and only the ones the job actually has, so a
-// running job doesn't grow a wall of null placeholders it never had.
+// Only the requested keys the job actually has, so a running job does not grow
+// null placeholders.
 export function pickJobFields(json: JsonObject, fields: readonly string[]): JsonObject {
 	const picked: JsonObject = {};
 	for (const field of fields) {
@@ -158,9 +148,8 @@ function project(
 ): JsonObject {
 	if (mode === 'raw') return json;
 	if (mode === 'simplified') return pickJobFields(json, simplified);
-	// `id` is always included, whether or not the user picked it, so an agent can
-	// come back for the rest of the record later. This is what n8n's UX
-	// guidelines require of the Selected Fields mode.
+	// n8n's UX guidelines require Selected Fields to always include the ID, so an
+	// agent can come back for the rest of the record.
 	return pickJobFields(json, ['id', ...selected.filter((field) => field !== 'id')]);
 }
 
@@ -198,8 +187,8 @@ export function buildAssetItem(
 	return { json: buildAssetJson(asset, mode, selected), pairedItem: { item: itemIndex } };
 }
 
-// camelCase -> Title Case, for the Fields dropdown labels. Acronyms n8n's style
-// guide spells a specific way are overridden by the caller.
+// camelCase -> Title Case for the Fields dropdown. The caller overrides acronyms
+// n8n's style guide spells a specific way.
 export function titleCaseFieldName(name: string): string {
 	return name
 		.replace(/([a-z0-9])([A-Z])/g, '$1 $2')

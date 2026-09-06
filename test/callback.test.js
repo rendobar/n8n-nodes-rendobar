@@ -133,7 +133,7 @@ test('the header reader survives a value that is not the collection shape', () =
 	}
 });
 
-// ── The two parameters behind it ──────────────────────────────────────────
+// The two parameters behind it
 
 const { Rendobar } = require('../dist/nodes/Rendobar/Rendobar.node.js');
 
@@ -160,7 +160,7 @@ test('Create takes a callback address, on the Job resource only', () => {
 	const optionsCollection = properties.find((property) => property.name === 'options');
 	assert.deepEqual(optionsCollection.displayOptions.show.operation, ['create']);
 	assert.deepEqual(optionsCollection.displayOptions.show.resource, ['job']);
-	// The whole point is the Wait node pairing, so the example has to be it.
+	// The example has to be the Wait node pairing.
 	assert.match(url.placeholder, /\$execution\.resumeUrl/);
 	assert.match(url.description, /Wait node/);
 });
@@ -196,8 +196,8 @@ test('no copy promises a delivery the retry window cannot keep', () => {
 });
 
 test('the two delivery routes are refused together, and each is fine alone', () => {
-	// Behaviour, not wording. This is the combination that parks an execution for
-	// good, and it is answered before the job is submitted.
+	// Behaviour, not wording: the combination that parks an execution for good,
+	// answered before the job is submitted.
 	assert.ok(waitAndCallbackConflict(true, true), 'both together must be refused');
 
 	assert.equal(waitAndCallbackConflict(true, false), undefined, 'a callback alone is fine');

@@ -9,9 +9,8 @@ import { rendobarApiRequest } from '../shared/transport';
 import { arrayAt, isJsonObject, objectAt, objectsAt, booleanAt, stringAt } from '../shared/json';
 import type { JsonObject, JsonValue } from '../shared/json';
 
-// Rendobar's connector field types map onto n8n's resource-mapper field types.
-// A nested parameter (Rendobar type "json") becomes an object field, which n8n
-// renders as a raw JSON editor.
+// Rendobar's connector field types mapped onto n8n's. Rendobar "json" becomes
+// an object field, which n8n renders as a raw JSON editor.
 const TYPE_MAP: Record<string, FieldType> = {
 	string: 'string',
 	number: 'number',
@@ -30,27 +29,19 @@ function defaultValueOf(value: unknown): DefaultValue {
 }
 
 /**
- * Whether n8n would put a value in this parameter that the user never chose.
+ * Whether n8n would send a value the user never entered.
  *
- * n8n draws a `number` parameter with element-plus's InputNumber, which turns an
- * empty input into 0 as it mounts and writes that back through the resource
- * mapper (`element-plus/es/components/input-number/src/input-number2.mjs`,
- * onMounted: `if (!isNumber(modelValue) && modelValue != null) emit(
- * UPDATE_MODEL_EVENT, Number(modelValue))`, reached because
- * `MappingFields.vue` hands an unset field to the input as `''`). Merely
- * opening the panel is enough: a `timeout` nobody touched reaches `POST /jobs`
- * as 0, which every job type refuses, and an untouched `seed` reaches it as 0,
- * which no job type refuses — it silently pins a generation the user meant to
- * leave random.
+ * n8n draws a `number` parameter with element-plus InputNumber, which writes 0
+ * back through the resource mapper as it mounts on an empty input
+ * (`element-plus/es/components/input-number/src/input-number2.mjs`, onMounted;
+ * `MappingFields.vue` hands an unset field to it as `''`). Opening the panel is
+ * enough: an untouched `timeout` reaches `POST /jobs` as 0, which every job type
+ * refuses, and an untouched `seed` reaches it as 0, which nothing refuses, so it
+ * silently pins a generation meant to stay random.
  *
- * Nothing in what n8n saves tells that 0 apart from one the user typed: the
- * schema entry it writes alongside is identical either way. So the fix cannot
- * be to drop zeros on the way out — it has to be to stop n8n inventing one.
- * A parameter the job type gives a default for is safe, because n8n pre-fills
- * the input with that number and it never mounts empty. The rest are offered
- * through n8n's 'Add parameter' menu instead of being drawn, which is n8n's own
- * idiom for an optional field and leaves the panel honest: what it shows is
- * exactly what gets sent.
+ * A saved 0 is indistinguishable from a typed one, so these are marked `removed`
+ * and offered through n8n's 'Add parameter' menu instead of being drawn. A
+ * parameter with a default is safe: n8n pre-fills it and it never mounts empty.
  */
 function n8nWouldInventAValue(
 	type: FieldType,
@@ -77,13 +68,10 @@ export function toMapperField(field: JsonObject): ResourceMapperField | undefine
 		return [{ name: stringAt(option, 'label') ?? value, value }];
 	});
 
-	// The ResourceMapper keys rows by `id`, and `name` is not unique: a
-	// discriminated union emits one entry per shape, so image.generate returns
-	// FOUR `steps` fields with different bounds. Keyed on `name` the UI showed
-	// four identical-looking rows, one of which arbitrarily won.
-	//
-	// `key` is unique and is `name` or `name__<digest>`. Older API responses have
-	// no `key`, so fall back to `name` rather than dropping the field.
+	// Rows are keyed by `id` and `name` is not unique: a discriminated union emits
+	// one entry per shape, so image.generate returns four `steps` fields with
+	// different bounds and the UI showed four identical rows. `key` is unique
+	// (`name` or `name__<digest>`); older API responses have none, so fall back.
 	const key = stringAt(field, 'key') ?? name;
 
 	return {
@@ -100,15 +88,13 @@ export function toMapperField(field: JsonObject): ResourceMapperField | undefine
 }
 
 /**
- * Whether the job type has parameters that the flat field list could not carry.
+ * Whether the job type has parameters the flat field list could not carry.
  *
- * `GET /jobs/types/:type/schema` returns both a flat `fields` projection and the
- * whole `jsonSchema`. A job type whose parameters are a union — `compose` is an
- * `anyOf` of a timeline shape and a prompt shape, the two image types are
- * `oneOf` — has no single flat form, so the projection comes back empty while
- * the schema plainly describes required parameters. Telling that apart from a
- * job type that genuinely takes none is what decides whether the user is
- * pointed at 'Parameters (JSON)' or told there is nothing to fill in.
+ * `GET /jobs/types/:type/schema` returns a flat `fields` projection and the whole
+ * `jsonSchema`. A union has no single flat form (`compose` is an `anyOf`, both
+ * image types are `oneOf`), so `fields` comes back empty while the schema still
+ * describes required parameters. Decides whether the user is sent to
+ * 'Parameters (JSON)' or told there is nothing to fill in.
  */
 export function describesParameters(jsonSchema: JsonValue | undefined): boolean {
 	if (!isJsonObject(jsonSchema)) return false;
@@ -121,20 +107,14 @@ export function describesParameters(jsonSchema: JsonValue | undefined): boolean 
 	return properties !== undefined && Object.keys(properties).length > 0;
 }
 
-/**
- * Loads the parameter fields for the chosen job type from
- * `GET /jobs/types/:type/schema`. n8n calls this whenever Job Type changes, so
- * the form always matches the live schema with no release of this node.
- */
+/** Called whenever Job Type changes, so the form tracks the live schema. */
 export async function getJobFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
-	// `extractValue` resolves the Resource Locator down to the job type name,
-	// but the declared return type still spans every parameter shape.
+	// `extractValue` resolves the locator to the job type name; the declared
+	// return type still spans every parameter shape.
 	const selected = this.getNodeParameter('jobType', undefined, { extractValue: true });
 	const jobType = typeof selected === 'string' ? selected.trim() : '';
 
-	// No notice while Job Type is empty: the mapper already draws its own empty
-	// state, and a line telling the user to fill in the field above it adds
-	// nothing the panel does not already show.
+	// No notice while Job Type is empty: the mapper draws its own empty state.
 	if (jobType === '') return { fields: [] };
 
 	const response = await rendobarApiRequest.call(this, {

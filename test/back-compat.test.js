@@ -1,15 +1,11 @@
-// Six Create parameters moved into an 'Options' collection in 0.5.0. Moving a
-// parameter into a collection changes WHERE n8n stores it, so a workflow saved
-// on 0.3.0 or 0.4.0 keeps its value at the top level while anything built on
-// 0.5.0 stores it under `options`.
+// Six Create parameters moved into an 'Options' collection in 0.5.0, which
+// changes WHERE n8n stores them: a workflow saved on 0.3.0 or 0.4.0 keeps its
+// value at the top level, anything built on 0.5.0 stores it under `options`.
 //
-// Both have to keep working, and the failure mode if they do not is quiet: the
-// node reads the default instead of the saved value, so a workflow that waited
-// 600 seconds silently starts waiting 300, and one that posted a callback
-// silently stops posting. Nothing errors. The plan for this work asked for a
-// test that loads a 0.3.0-shaped parameter object for exactly that reason, and
-// because the getAll and idempotency regressions both came from assuming a
-// shape.
+// The failure mode is silent. The node reads the default instead of the saved
+// value, so a workflow that waited 600 seconds starts waiting 300 and one that
+// posted a callback stops posting, with nothing raised. These load a
+// 0.3.0-shaped parameter object to catch that.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 

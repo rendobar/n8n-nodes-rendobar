@@ -39,8 +39,8 @@ test('the end of the list is judged on the rows the API sent', () => {
 
 test('a row that is not an object still counts toward the offset', () => {
 	// This is the drift: `data: [job, null, job]` narrows to two usable rows. If
-	// paging counted two, the next request would start one row early — reading a
-	// row twice — and a Return All would stop here, because two is short of the
+	// paging counted two, the next request would start one row early, reading a
+	// row twice, and a Return All would stop here, because two is short of the
 	// page size.
 	const rows = [{ id: 'a' }, null, { id: 'b' }];
 	const usable = rows.filter((row) => typeof row === 'object' && row !== null);

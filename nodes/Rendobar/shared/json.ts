@@ -1,20 +1,14 @@
 import type { JsonObject, JsonValue } from 'n8n-workflow';
 
-// Narrowing primitives for values that arrive as JSON from the Rendobar API.
+// Narrowing primitives for JSON from the Rendobar API.
 //
-// n8n's HTTP helpers type a response body as `any`, so without this every
-// consumer ends up asserting its way to a shape the compiler never checked. The
-// rule this package follows is "parse at the boundary, trust internally":
-// `shared/transport.ts` turns the helper's `any` into `JsonValue` exactly once,
-// with a comment, and everything downstream uses the guards below, which are
-// total functions returning `undefined` rather than throwing or lying.
+// n8n's HTTP helpers type a response body as `any`. `shared/transport.ts` turns
+// that into `JsonValue` once, and everything downstream uses the guards below:
+// total functions returning `undefined` rather than throwing.
 //
-// The types are n8n's own (`JsonValue` / `JsonObject`) rather than a parallel
-// set, and `JsonObject` is structurally assignable to `IDataObject`, so a
-// parsed body reaches `INodeExecutionData.json` with no assertion anywhere.
-//
-// There is no schema library here on purpose: a verified community node must
-// ship no runtime dependencies, so the checks are hand-rolled and kept small.
+// The types are n8n's own, and `JsonObject` is structurally assignable to
+// `IDataObject`, so a parsed body reaches `INodeExecutionData.json` with no
+// assertion. No schema library: a verified community node ships no runtime deps.
 
 export type { JsonObject, JsonValue };
 
@@ -63,19 +57,16 @@ export function stringsAt(source: JsonValue | undefined, key: string): string[] 
 }
 
 /**
- * Most Rendobar responses are `{ data: <payload> }`. A few — `POST /assets` in
- * particular — put `data` beside a sibling discriminator instead, so callers
- * that want the whole response still get something useful when `data` is absent.
+ * Most Rendobar responses are `{ data: <payload> }`. A few (`POST /assets`) put
+ * `data` beside a sibling, so callers still get something when it is absent.
  */
 export function unwrapData(response: JsonValue | undefined): JsonObject | undefined {
 	return objectAt(response, 'data') ?? asObject(response);
 }
 
-// ── n8n parameter bags ────────────────────────────────────────────────────
-//
-// Values read back with `getNodeParameter` are typed as a broad union (a
-// collection, a resource-mapper value, a resource locator, …). These read one
-// key off such a value without assuming which member of the union it is.
+// n8n parameter bags. `getNodeParameter` returns a broad union (collection,
+// resource-mapper value, resource locator). These read one key off it without
+// assuming which member it is.
 
 export function readValue(source: unknown, key: string): unknown {
 	return valueAt(source, key);
@@ -98,12 +89,10 @@ export function readNumber(source: unknown, key: string): number | undefined {
 }
 
 /**
- * Narrows a value of unknown shape to a JSON object. Everything that reaches
- * this came from a node parameter the user filled in through the n8n UI, which
- * stores only JSON-serialisable values, so once the guard has established it is
- * a plain object its members are `JsonValue`s by construction. This is the only
- * place in the package that trusts a parameter value without checking it
- * member by member.
+ * Narrows an unknown value to a JSON object. Its input is always a node
+ * parameter, and n8n stores only JSON-serialisable values, so once the guard
+ * says plain object its members are `JsonValue` by construction. The only place
+ * here that trusts a parameter without checking it member by member.
  */
 function asParameterObject(value: unknown): JsonObject | undefined {
 	if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
@@ -115,9 +104,8 @@ export function readObject(source: unknown, key: string): JsonObject | undefined
 }
 
 /**
- * Reads a parameter the user may have typed as JSON text or produced from an
- * expression. Returns a discriminated result instead of throwing so the caller
- * can raise the error naming its own parameter.
+ * A parameter the user typed as JSON text or produced from an expression.
+ * Returns a union rather than throwing, so the caller names its own parameter.
  */
 export type JsonParameter =
 	| { ok: true; value: JsonObject }
@@ -132,8 +120,7 @@ export function readJsonParameter(raw: unknown): JsonParameter {
 
 		let parsed: JsonValue;
 		try {
-			// `JSON.parse` is typed `any`; whatever it returns is a `JsonValue` by
-			// definition of the grammar it accepts.
+			// `JSON.parse` is typed `any`; its grammar only produces `JsonValue`.
 			parsed = JSON.parse(text) as JsonValue;
 		} catch {
 			return { ok: false, reason: 'unparsable' };

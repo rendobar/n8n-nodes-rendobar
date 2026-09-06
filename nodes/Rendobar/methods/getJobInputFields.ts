@@ -6,17 +6,9 @@ import type { JsonObject } from '../shared/json';
 /**
  * The media a job reads, as resource-mapper fields.
  *
- * This exists because the schema endpoint used to describe parameters only, so
- * the media had to be hand-written into 'Inputs (JSON)': a user had to know
- * that compress.target wants a key called `source` before anything would run.
- * `GET /jobs/types/:type/schema` now also returns an `inputs` descriptor, and
- * this turns it into the same kind of form the parameters already get.
- *
- * Every input is a URL, so every field is a string. A file picker is
- * deliberately not offered here: n8n would have to hold the whole file to hand
- * it over, and Rendobar fetches the URL itself. The File resource's Upload
- * operation covers bytes that only exist inside the workflow, and its output is
- * a URL to put in one of these fields.
+ * Every input is a URL, so every field is a string. No file picker: n8n would
+ * have to hold the whole file and Rendobar fetches the URL itself. File > Upload
+ * covers bytes that only exist inside the workflow and returns a URL for here.
  */
 function toInputField(input: JsonObject): ResourceMapperField | undefined {
 	const name = stringAt(input, 'name');
@@ -39,18 +31,13 @@ function toInputField(input: JsonObject): ResourceMapperField | undefined {
 	};
 }
 
-/**
- * The descriptor turned into fields, with the three cases that produce none.
- *
- * Pure and exported so it can be tested without a transport, which is how the
- * rest of this node's method logic is covered.
- */
+/** The descriptor turned into fields. Exported pure so it tests without a transport. */
 export function inputFieldsFrom(
 	inputs: JsonObject | undefined,
 	jobType: string,
 ): ResourceMapperFields {
-	// An API deployed before the inputs descriptor. Saying so beats an empty
-	// form that looks like the job needs no media.
+	// An API deployed before the inputs descriptor. Say so rather than show an
+	// empty form that reads as "needs no media".
 	if (inputs === undefined) {
 		return {
 			fields: [],
@@ -81,11 +68,7 @@ export function inputFieldsFrom(
 	};
 }
 
-/**
- * Loads the input fields for the chosen job type. n8n calls this whenever Job
- * Type changes, so the form always matches the live contract with no release of
- * this node.
- */
+/** Called whenever Job Type changes, so the form tracks the live contract. */
 export async function getJobInputFields(this: ILoadOptionsFunctions): Promise<ResourceMapperFields> {
 	const selected = this.getNodeParameter('jobType', undefined, { extractValue: true });
 	const jobType = typeof selected === 'string' ? selected.trim() : '';
