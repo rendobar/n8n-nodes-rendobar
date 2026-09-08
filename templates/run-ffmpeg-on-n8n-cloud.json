@@ -60,6 +60,7 @@
 					"values": [
 						{
 							"fieldLabel": "Video URL",
+							"fieldType": "text",
 							"placeholder": "https://cdn.rendobar.com/assets/examples/sample.mp4",
 							"requiredField": true
 						},
@@ -76,7 +77,7 @@
 			"id": "8f5b4d70-f34c-4568-8fa0-3659028f8788",
 			"name": "FFmpeg form",
 			"type": "n8n-nodes-base.formTrigger",
-			"typeVersion": 2.2,
+			"typeVersion": 2.6,
 			"position": [0, 40],
 			"webhookId": "906c5e81-045d-4679-9ab1-476a139a9899"
 		},
@@ -163,7 +164,7 @@
 			"id": "f6c2b4e7-6ab3-4cdf-8a17-adc079f9ffff",
 			"name": "Post the link to Slack",
 			"type": "n8n-nodes-base.slack",
-			"typeVersion": 2.3,
+			"typeVersion": 2.7,
 			"position": [1100, 40]
 		},
 		{
@@ -199,7 +200,7 @@
 			"id": "3a06f82b-aef7-4013-8e5b-e104bd3a4444",
 			"name": "Post the error to Slack",
 			"type": "n8n-nodes-base.slack",
-			"typeVersion": 2.3,
+			"typeVersion": 2.7,
 			"position": [400, 340]
 		}
 	],
