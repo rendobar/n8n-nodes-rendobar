@@ -1,0 +1,216 @@
+{
+	"name": "Run any FFmpeg command on n8n Cloud with Rendobar and save the output to Drive",
+	"nodes": [
+		{
+			"parameters": {
+				"content": "## How it works\n\nn8n Cloud has no FFmpeg and no Execute Command node, and self-hosted n8n disables Execute Command by default since 2.0. This workflow runs the FFmpeg command anyway, on Rendobar, and puts the output in Google Drive.\n\nA form takes a video URL and an FFmpeg command. The command names the input `source` and the output `output.mp4`, the same way you would on your own machine, and Rendobar runs it on its own workers with the full FFmpeg build. The job carries the Wait node's resume URL as its callback, so the execution parks while FFmpeg works and resumes when the job finishes. Nothing polls.\n\nA second, separate branch listens for any job that fails, reads the runner's log through Get Logs, and posts the FFmpeg stderr to Slack. That is the line you actually need when a filter graph refuses to build.\n\n## Setup steps\n\n1. Create a free Rendobar account at rendobar.com and make an API key under Settings. Add it as a Rendobar API credential on every Rendobar node.\n2. Connect Google Drive and pick the folder in the Save node.\n3. Connect Slack and pick the channel in both Slack nodes.\n4. Open the form URL from the trigger, paste a video URL and a command such as `-i source -vf scale=-2:720 -c:v libx264 -crf 28 output.mp4`.\n\nThe finished file lands in Drive and Slack gets the link. Change the command and the same workflow does trims, GIFs, audio extraction, or anything else FFmpeg does.",
+				"height": 640,
+				"width": 640
+			},
+			"id": "4b17093c-bf08-4124-8b6c-f215ce4b434b",
+			"name": "How it works",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [-60, -720]
+		},
+		{
+			"parameters": {
+				"content": "### Submit, then park\nThe form gives the URL and the command. Create submits the job with the Wait node's resume URL as its callback and the execution pauses here for free.",
+				"height": 260,
+				"width": 640,
+				"color": 7
+			},
+			"id": "5c28e14d-c019-4235-9c7d-0326df5c5455",
+			"name": "Section: submit",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [-60, -60]
+		},
+		{
+			"parameters": {
+				"content": "### Deliver\nGet re-fetches the finished job over your own credential and downloads the file. Drive keeps it and Slack gets the link.",
+				"height": 260,
+				"width": 640,
+				"color": 7
+			},
+			"id": "6d39f25e-d12a-4346-8d8e-1437e06d6566",
+			"name": "Section: deliver",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [600, -60]
+		},
+		{
+			"parameters": {
+				"content": "### When a job fails\nThis branch is its own trigger. Rendobar calls it for any failed job on the account, Get Logs reads what the runner reported, and Slack gets the FFmpeg error text.",
+				"height": 260,
+				"width": 640,
+				"color": 7
+			},
+			"id": "7e4a3c6f-e23b-4457-9e9f-2548f17e7677",
+			"name": "Section: failures",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [-60, 240]
+		},
+		{
+			"parameters": {
+				"formTitle": "Run an FFmpeg command",
+				"formDescription": "The command names the input source and the output output.mp4.",
+				"formFields": {
+					"values": [
+						{
+							"fieldLabel": "Video URL",
+							"placeholder": "https://cdn.rendobar.com/assets/examples/sample.mp4",
+							"requiredField": true
+						},
+						{
+							"fieldLabel": "FFmpeg command",
+							"fieldType": "textarea",
+							"placeholder": "-i source -vf scale=-2:720 -c:v libx264 -crf 28 -preset fast output.mp4",
+							"requiredField": true
+						}
+					]
+				},
+				"options": {}
+			},
+			"id": "8f5b4d70-f34c-4568-8fa0-3659028f8788",
+			"name": "FFmpeg form",
+			"type": "n8n-nodes-base.formTrigger",
+			"typeVersion": 2.2,
+			"position": [0, 40],
+			"webhookId": "906c5e81-045d-4679-9ab1-476a139a9899"
+		},
+		{
+			"parameters": {
+				"resource": "job",
+				"operation": "create",
+				"jobType": { "__rl": true, "mode": "id", "value": "ffmpeg" },
+				"inputsMode": "json",
+				"inputs": "={{ JSON.stringify({ source: $json['Video URL'] }) }}",
+				"paramsMode": "fields",
+				"params": {
+					"mappingMode": "defineBelow",
+					"value": {
+						"command": "={{ $json['FFmpeg command'] }}"
+					}
+				},
+				"options": {
+					"callbackUrl": "={{ $execution.resumeUrl }}"
+				},
+				"output": "simplified"
+			},
+			"id": "a17d6f92-156e-478a-9bc2-587b24a4a9aa",
+			"name": "Run FFmpeg on Rendobar",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobar",
+			"typeVersion": 1,
+			"position": [200, 40]
+		},
+		{
+			"parameters": {
+				"resume": "webhook",
+				"httpMethod": "POST",
+				"limitWaitTime": true,
+				"limitType": "afterTimeInterval",
+				"resumeAmount": 10,
+				"resumeUnit": "hours",
+				"options": {}
+			},
+			"id": "b28e70a3-267f-489b-8cd3-698c35b5bbbb",
+			"name": "Wait for the callback",
+			"type": "n8n-nodes-base.wait",
+			"typeVersion": 1.1,
+			"position": [400, 40],
+			"webhookId": "c39f81b4-3780-49ac-9de4-7a9d46c6cccc"
+		},
+		{
+			"parameters": {
+				"resource": "job",
+				"operation": "get",
+				"jobId": { "__rl": true, "mode": "id", "value": "={{ $json.body.data.jobId }}" },
+				"downloadOutput": true,
+				"outputBinaryProperty": "data",
+				"output": "simplified"
+			},
+			"id": "d4a092c5-4891-4abd-8ef5-8bae57d7dddd",
+			"name": "Fetch job and download file",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobar",
+			"typeVersion": 1,
+			"position": [660, 40]
+		},
+		{
+			"parameters": {
+				"resource": "file",
+				"operation": "upload",
+				"inputDataFieldName": "data",
+				"name": "={{ $json.file.path }}",
+				"driveId": { "__rl": true, "mode": "list", "value": "My Drive", "cachedResultName": "My Drive" },
+				"folderId": { "__rl": true, "mode": "list", "value": "root", "cachedResultName": "/ (Root folder)" },
+				"options": {}
+			},
+			"id": "e5b1a3d6-59a2-4bce-9f06-9cbf68e8eeee",
+			"name": "Save the output to Drive",
+			"type": "n8n-nodes-base.googleDrive",
+			"typeVersion": 3,
+			"position": [880, 40]
+		},
+		{
+			"parameters": {
+				"select": "channel",
+				"channelId": { "__rl": true, "mode": "list", "value": "", "cachedResultName": "" },
+				"text": "=FFmpeg finished: {{ $json.name }}\nhttps://drive.google.com/file/d/{{ $json.id }}/view",
+				"otherOptions": {}
+			},
+			"id": "f6c2b4e7-6ab3-4cdf-8a17-adc079f9ffff",
+			"name": "Post the link to Slack",
+			"type": "n8n-nodes-base.slack",
+			"typeVersion": 2.3,
+			"position": [1100, 40]
+		},
+		{
+			"parameters": {
+				"events": ["job.failed"]
+			},
+			"id": "07d3c5f8-7bc4-4de0-9b28-bed18a0d1111",
+			"name": "A job failed",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobarTrigger",
+			"typeVersion": 1,
+			"position": [0, 340],
+			"webhookId": "18e4d609-8cd5-4ef1-8c39-cfe29b1e2222"
+		},
+		{
+			"parameters": {
+				"resource": "job",
+				"operation": "getLogs",
+				"jobId": { "__rl": true, "mode": "id", "value": "={{ $json.data.jobId }}" }
+			},
+			"id": "29f5e71a-9de6-4f02-9d4a-d0f3ac2f3333",
+			"name": "Read the runner log",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobar",
+			"typeVersion": 1,
+			"position": [200, 340]
+		},
+		{
+			"parameters": {
+				"select": "channel",
+				"channelId": { "__rl": true, "mode": "list", "value": "", "cachedResultName": "" },
+				"text": "=Job {{ $json.jobId }} failed.\n```\n{{ $json.logs.map(l => l.message).join('\\n') }}\n```",
+				"otherOptions": {}
+			},
+			"id": "3a06f82b-aef7-4013-8e5b-e104bd3a4444",
+			"name": "Post the error to Slack",
+			"type": "n8n-nodes-base.slack",
+			"typeVersion": 2.3,
+			"position": [400, 340]
+		}
+	],
+	"connections": {
+		"FFmpeg form": { "main": [[{ "node": "Run FFmpeg on Rendobar", "type": "main", "index": 0 }]] },
+		"Run FFmpeg on Rendobar": { "main": [[{ "node": "Wait for the callback", "type": "main", "index": 0 }]] },
+		"Wait for the callback": { "main": [[{ "node": "Fetch job and download file", "type": "main", "index": 0 }]] },
+		"Fetch job and download file": { "main": [[{ "node": "Save the output to Drive", "type": "main", "index": 0 }]] },
+		"Save the output to Drive": { "main": [[{ "node": "Post the link to Slack", "type": "main", "index": 0 }]] },
+		"A job failed": { "main": [[{ "node": "Read the runner log", "type": "main", "index": 0 }]] },
+		"Read the runner log": { "main": [[{ "node": "Post the error to Slack", "type": "main", "index": 0 }]] }
+	},
+	"settings": { "executionOrder": "v1" }
+}
