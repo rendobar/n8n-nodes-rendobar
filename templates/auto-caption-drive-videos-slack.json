@@ -177,7 +177,7 @@
 			"id": "3a06f82b-aef7-4013-9bf9-e104bd3a323f",
 			"name": "Post the link to Slack",
 			"type": "n8n-nodes-base.slack",
-			"typeVersion": 2.3,
+			"typeVersion": 2.7,
 			"position": [1540, 40]
 		}
 	],
