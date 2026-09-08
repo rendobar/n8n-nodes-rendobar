@@ -1,0 +1,194 @@
+{
+	"name": "Auto-caption Google Drive videos with Rendobar and post the link to Slack",
+	"nodes": [
+		{
+			"parameters": {
+				"content": "## How it works\n\nDrop a video into a Google Drive folder and this workflow burns subtitles into it, saves the captioned copy next to the original, and posts the Drive link to a Slack channel.\n\nThe captions come from Rendobar's `caption.burn` job. Leave the language on auto and it transcribes the audio itself, in any language, then renders the text with an outline and a translucent box so it reads over any footage. If you already have an SRT or VTT file, pass it as the `subtitles` input instead and the job burns yours.\n\nEverything runs on n8n Cloud. There is no FFmpeg to install and no status loop: the job carries the Wait node's resume URL as its callback, so the execution parks while the video renders and resumes when Rendobar calls back.\n\n## Setup steps\n\n1. Create a free Rendobar account at rendobar.com and make an API key under Settings. Add it as a Rendobar API credential on the three Rendobar nodes.\n2. Connect Google Drive and pick the folder to watch in the trigger, then the folder to save into in the Save node.\n3. Connect Slack and pick the channel in the Post node.\n4. Adjust the caption style in Burn captions. Font, size, colours, box and position are all fields.\n\nTest it by dropping a short MP4 with speech into the watched folder.",
+				"height": 600,
+				"width": 640
+			},
+			"id": "7e4a3c6f-e23b-4457-8d3d-2548f17e3673",
+			"name": "How it works",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [-60, -680]
+		},
+		{
+			"parameters": {
+				"content": "### Get the video\nThe trigger fires on a new file. Drive downloads it as binary and Rendobar's Upload turns that binary into a URL the job can read.",
+				"height": 260,
+				"width": 640,
+				"color": 7
+			},
+			"id": "8f5b4d70-f34c-4568-9e4e-3659028f4784",
+			"name": "Section: get the video",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [-60, -60]
+		},
+		{
+			"parameters": {
+				"content": "### Caption, then park\nCreate submits the job with the Wait node's resume URL as its callback. The execution pauses here for free while the video transcribes and renders.",
+				"height": 260,
+				"width": 420,
+				"color": 7
+			},
+			"id": "906c5e81-045d-4679-8f5f-476a139a5895",
+			"name": "Section: caption",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [600, -60]
+		},
+		{
+			"parameters": {
+				"content": "### Deliver\nGet re-fetches the finished job over your own credential and downloads the file. Drive keeps the copy and Slack gets the link.",
+				"height": 260,
+				"width": 640,
+				"color": 7
+			},
+			"id": "a17d6f92-156e-478a-8a60-587b24a4a9a6",
+			"name": "Section: deliver",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [1040, -60]
+		},
+		{
+			"parameters": {
+				"pollTimes": { "item": [{ "mode": "everyMinute" }] },
+				"triggerOn": "specificFolder",
+				"folderToWatch": { "__rl": true, "mode": "list", "value": "", "cachedResultName": "" },
+				"event": "fileCreated",
+				"options": {}
+			},
+			"id": "b28e70a3-267f-489b-9b71-698c35b5bab7",
+			"name": "New video in Drive folder",
+			"type": "n8n-nodes-base.googleDriveTrigger",
+			"typeVersion": 1,
+			"position": [0, 40]
+		},
+		{
+			"parameters": {
+				"operation": "download",
+				"fileId": { "__rl": true, "mode": "id", "value": "={{ $json.id }}" },
+				"options": {}
+			},
+			"id": "c39f81b4-3780-49ac-8a82-7a9d46c6cbc8",
+			"name": "Download the video",
+			"type": "n8n-nodes-base.googleDrive",
+			"typeVersion": 3,
+			"position": [200, 40]
+		},
+		{
+			"parameters": {
+				"resource": "file",
+				"operation": "upload",
+				"binaryProperty": "data"
+			},
+			"id": "d4a092c5-4891-4abd-9b93-8bae57d7dcd9",
+			"name": "Upload to Rendobar",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobar",
+			"typeVersion": 1,
+			"position": [400, 40]
+		},
+		{
+			"parameters": {
+				"resource": "job",
+				"operation": "create",
+				"jobType": { "__rl": true, "mode": "id", "value": "caption.burn" },
+				"inputsMode": "json",
+				"inputs": "={{ JSON.stringify({ source: $json.url }) }}",
+				"paramsMode": "fields",
+				"params": {
+					"mappingMode": "defineBelow",
+					"value": {
+						"language": "auto",
+						"fontSize": 56,
+						"boxEnabled": true,
+						"boxOpacity": 0.6,
+						"position": "bottom"
+					}
+				},
+				"options": {
+					"callbackUrl": "={{ $execution.resumeUrl }}"
+				},
+				"output": "simplified"
+			},
+			"id": "e5b1a3d6-59a2-4bce-8ca4-9cbf68e8edea",
+			"name": "Burn captions",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobar",
+			"typeVersion": 1,
+			"position": [660, 40]
+		},
+		{
+			"parameters": {
+				"resume": "webhook",
+				"httpMethod": "POST",
+				"limitWaitTime": true,
+				"limitType": "afterTimeInterval",
+				"resumeAmount": 10,
+				"resumeUnit": "hours",
+				"options": {}
+			},
+			"id": "f6c2b4e7-6ab3-4cdf-9db5-adc079f9fefb",
+			"name": "Wait for the callback",
+			"type": "n8n-nodes-base.wait",
+			"typeVersion": 1.1,
+			"position": [860, 40],
+			"webhookId": "07d3c5f8-7bc4-4de0-8ec6-bed18a0d0f0c"
+		},
+		{
+			"parameters": {
+				"resource": "job",
+				"operation": "get",
+				"jobId": { "__rl": true, "mode": "id", "value": "={{ $json.body.data.jobId }}" },
+				"downloadOutput": true,
+				"outputBinaryProperty": "data",
+				"output": "simplified"
+			},
+			"id": "18e4d609-8cd5-4ef1-9fd7-cfe29b1e101d",
+			"name": "Fetch job and download file",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobar",
+			"typeVersion": 1,
+			"position": [1100, 40]
+		},
+		{
+			"parameters": {
+				"resource": "file",
+				"operation": "upload",
+				"inputDataFieldName": "data",
+				"name": "={{ $json.file.path }}",
+				"driveId": { "__rl": true, "mode": "list", "value": "My Drive", "cachedResultName": "My Drive" },
+				"folderId": { "__rl": true, "mode": "list", "value": "root", "cachedResultName": "/ (Root folder)" },
+				"options": {}
+			},
+			"id": "29f5e71a-9de6-4f02-8ae8-d0f3ac2f212e",
+			"name": "Save the captioned copy to Drive",
+			"type": "n8n-nodes-base.googleDrive",
+			"typeVersion": 3,
+			"position": [1320, 40]
+		},
+		{
+			"parameters": {
+				"select": "channel",
+				"channelId": { "__rl": true, "mode": "list", "value": "", "cachedResultName": "" },
+				"text": "=Captioned: {{ $json.name }}\nhttps://drive.google.com/file/d/{{ $json.id }}/view",
+				"otherOptions": {}
+			},
+			"id": "3a06f82b-aef7-4013-9bf9-e104bd3a323f",
+			"name": "Post the link to Slack",
+			"type": "n8n-nodes-base.slack",
+			"typeVersion": 2.7,
+			"position": [1540, 40]
+		}
+	],
+	"connections": {
+		"New video in Drive folder": { "main": [[{ "node": "Download the video", "type": "main", "index": 0 }]] },
+		"Download the video": { "main": [[{ "node": "Upload to Rendobar", "type": "main", "index": 0 }]] },
+		"Upload to Rendobar": { "main": [[{ "node": "Burn captions", "type": "main", "index": 0 }]] },
+		"Burn captions": { "main": [[{ "node": "Wait for the callback", "type": "main", "index": 0 }]] },
+		"Wait for the callback": { "main": [[{ "node": "Fetch job and download file", "type": "main", "index": 0 }]] },
+		"Fetch job and download file": { "main": [[{ "node": "Save the captioned copy to Drive", "type": "main", "index": 0 }]] },
+		"Save the captioned copy to Drive": { "main": [[{ "node": "Post the link to Slack", "type": "main", "index": 0 }]] }
+	},
+	"settings": { "executionOrder": "v1" }
+}

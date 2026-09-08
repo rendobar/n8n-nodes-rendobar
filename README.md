@@ -2,6 +2,8 @@
 
 n8n community node for [Rendobar](https://rendobar.com), a media processing API. Submit, track, download and cancel video jobs from your workflows, read the account balance, and start workflows when jobs finish.
 
+Verified by n8n and listed at [n8n.io/integrations/rendobar](https://n8n.io/integrations/rendobar/), so it installs from the nodes panel on n8n Cloud.
+
 [n8n](https://n8n.io) is a fair-code workflow automation platform.
 
 ## Contents
@@ -20,7 +22,11 @@ n8n community node for [Rendobar](https://rendobar.com), a media processing API.
 
 ## Installation
 
-In n8n, go to **Settings > Community Nodes** and install `@rendobar/n8n-nodes-rendobar`. See the n8n [community nodes docs](https://docs.n8n.io/integrations/community-nodes/installation/) for details.
+**n8n Cloud.** Open a workflow, press `+` to open the nodes panel, and search for `Rendobar`. It appears under **More from the community** with a verified badge. Select it and choose **Install**. The node is then available to everyone on the instance. If it does not appear, an instance owner turns on **Verified Community Nodes** in the Cloud Admin Panel, and a restart of the instance may be needed the first time.
+
+**Self-hosted n8n.** The same search works on 1.94.0 and later, as long as `N8N_COMMUNITY_PACKAGES_ENABLED` and `N8N_VERIFIED_PACKAGES_ENABLED` keep their default of `true`. The older route still works too: **Settings > Community Nodes**, then install `@rendobar/n8n-nodes-rendobar` by name. See the n8n [verified community nodes docs](https://docs.n8n.io/integrations/community-nodes/installation-and-management/install-verified-community-nodes) for details.
+
+Ready-made workflows are in [`templates/`](./templates/), including one that runs any FFmpeg command on n8n Cloud.
 
 ## Credentials
 
@@ -224,7 +230,7 @@ None of this duplicates work. Rendobar refuses a key only once the job holding i
 
 ## Example workflows
 
-Import any of the JSON below with **Workflows > Import from File / Clipboard**, then pick your Rendobar credential on the Rendobar nodes.
+Import any of the JSON below with **Workflows > Import from File / Clipboard**, then pick your Rendobar credential on the Rendobar nodes. Complete workflows with Google Drive, Slack and Telegram wired in are in [`templates/`](./templates/).
 
 ### 1. Compress a video and wait for the result
 

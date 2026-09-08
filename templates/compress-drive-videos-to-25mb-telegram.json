@@ -1,0 +1,193 @@
+{
+	"name": "Compress Google Drive videos under 25 MB with Rendobar and send them to Telegram",
+	"nodes": [
+		{
+			"parameters": {
+				"content": "## How it works\n\nDrop a video into a Google Drive folder and this workflow compresses it to fit under 25 MB, saves the small copy next to the original, and sends it to a Telegram chat. 25 MB is the ceiling for Whisper transcription uploads and for many chat and email attachments.\n\nThe heavy step runs on Rendobar, so nothing here needs FFmpeg installed and the whole thing runs on n8n Cloud. The job takes a callback URL, so the execution parks on the Wait node while the video compresses and resumes when Rendobar calls back. No polling loop and no worker held open.\n\n## Setup steps\n\n1. Create a free Rendobar account at rendobar.com and make an API key under Settings. Add it as a Rendobar API credential on the three Rendobar nodes.\n2. Connect Google Drive and pick the folder to watch in the trigger, then the folder to save into in the Save node.\n3. Connect Telegram and put your chat ID in the Send node.\n4. Change the size cap in Compress if 25 MB is not your limit. Any size string works, like `8mb` or `500kb`.\n\nTest it by dropping an MP4 into the watched folder. The compressed copy appears in Drive and in Telegram within a minute for a short clip.",
+				"height": 560,
+				"width": 640
+			},
+			"id": "a1f3c9d2-1b6e-4d8a-9c3f-5e7b2a4d6f80",
+			"name": "How it works",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [-60, -640]
+		},
+		{
+			"parameters": {
+				"content": "### Get the video\nThe trigger fires on a new file. Drive downloads it as binary and Rendobar's Upload turns that binary into a URL the job can read.",
+				"height": 260,
+				"width": 640,
+				"color": 7
+			},
+			"id": "b2e4d0a3-2c7f-4e9b-8d4a-6f8c3b5e7a91",
+			"name": "Section: get the video",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [-60, -60]
+		},
+		{
+			"parameters": {
+				"content": "### Compress, then park\nCreate submits the job with the Wait node's resume URL as its callback. The execution pauses here for free until Rendobar calls back.",
+				"height": 260,
+				"width": 420,
+				"color": 7
+			},
+			"id": "c3f5e1b4-3d80-4fac-9e5b-7a9d4c6f8ba2",
+			"name": "Section: compress",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [600, -60]
+		},
+		{
+			"parameters": {
+				"content": "### Deliver\nGet re-fetches the finished job over your own credential and downloads the file. Drive and Telegram both receive the binary.",
+				"height": 320,
+				"width": 640,
+				"color": 7
+			},
+			"id": "d4a6f2c5-4e91-4abd-8f6c-8bae5d7a9cb3",
+			"name": "Section: deliver",
+			"type": "n8n-nodes-base.stickyNote",
+			"typeVersion": 1,
+			"position": [1040, -60]
+		},
+		{
+			"parameters": {
+				"pollTimes": { "item": [{ "mode": "everyMinute" }] },
+				"triggerOn": "specificFolder",
+				"folderToWatch": { "__rl": true, "mode": "list", "value": "", "cachedResultName": "" },
+				"event": "fileCreated",
+				"options": {}
+			},
+			"id": "e5b7a3d6-5fa2-4bce-9a7d-9cbf6e8bade4",
+			"name": "New video in Drive folder",
+			"type": "n8n-nodes-base.googleDriveTrigger",
+			"typeVersion": 1,
+			"position": [0, 40]
+		},
+		{
+			"parameters": {
+				"operation": "download",
+				"fileId": { "__rl": true, "mode": "id", "value": "={{ $json.id }}" },
+				"options": {}
+			},
+			"id": "f6c8b4e7-6ab3-4cdf-8b8e-adc07f9cbef5",
+			"name": "Download the video",
+			"type": "n8n-nodes-base.googleDrive",
+			"typeVersion": 3,
+			"position": [200, 40]
+		},
+		{
+			"parameters": {
+				"resource": "file",
+				"operation": "upload",
+				"binaryProperty": "data"
+			},
+			"id": "07d9c5f8-7bc4-4de0-9c9f-bed18a0dcf06",
+			"name": "Upload to Rendobar",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobar",
+			"typeVersion": 1,
+			"position": [400, 40]
+		},
+		{
+			"parameters": {
+				"resource": "job",
+				"operation": "create",
+				"jobType": { "__rl": true, "mode": "id", "value": "compress.target" },
+				"inputsMode": "json",
+				"inputs": "={{ JSON.stringify({ source: $json.url }) }}",
+				"paramsMode": "json",
+				"paramsJson": "{\n  \"for\": \"web\",\n  \"target\": { \"maxSize\": \"25mb\" },\n  \"maxResolution\": \"1080p\"\n}",
+				"options": {
+					"callbackUrl": "={{ $execution.resumeUrl }}"
+				},
+				"output": "simplified"
+			},
+			"id": "18ead609-8cd5-4ef1-8dad-cfe29b1ed017",
+			"name": "Compress under 25 MB",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobar",
+			"typeVersion": 1,
+			"position": [660, 40]
+		},
+		{
+			"parameters": {
+				"resume": "webhook",
+				"httpMethod": "POST",
+				"limitWaitTime": true,
+				"limitType": "afterTimeInterval",
+				"resumeAmount": 10,
+				"resumeUnit": "hours",
+				"options": {}
+			},
+			"id": "29fbe71a-9de6-4f02-9ebe-d0f3ac2fe128",
+			"name": "Wait for the callback",
+			"type": "n8n-nodes-base.wait",
+			"typeVersion": 1.1,
+			"position": [860, 40],
+			"webhookId": "3a0cf82b-aef7-4013-8fcf-e104bd3af239"
+		},
+		{
+			"parameters": {
+				"resource": "job",
+				"operation": "get",
+				"jobId": { "__rl": true, "mode": "id", "value": "={{ $json.body.data.jobId }}" },
+				"downloadOutput": true,
+				"outputBinaryProperty": "data",
+				"output": "simplified"
+			},
+			"id": "4b1d093c-bf08-4124-9a0a-f215ce4b0340",
+			"name": "Fetch job and download file",
+			"type": "@rendobar/n8n-nodes-rendobar.rendobar",
+			"typeVersion": 1,
+			"position": [1100, 40]
+		},
+		{
+			"parameters": {
+				"resource": "file",
+				"operation": "upload",
+				"inputDataFieldName": "data",
+				"name": "={{ $json.file.path }}",
+				"driveId": { "__rl": true, "mode": "list", "value": "My Drive", "cachedResultName": "My Drive" },
+				"folderId": { "__rl": true, "mode": "list", "value": "root", "cachedResultName": "/ (Root folder)" },
+				"options": {}
+			},
+			"id": "5c2e1a4d-c019-4235-8b1b-0326df5c1451",
+			"name": "Save the small copy to Drive",
+			"type": "n8n-nodes-base.googleDrive",
+			"typeVersion": 3,
+			"position": [1320, -40]
+		},
+		{
+			"parameters": {
+				"resource": "message",
+				"operation": "sendVideo",
+				"chatId": "",
+				"binaryData": true,
+				"binaryPropertyName": "data",
+				"additionalFields": {
+					"caption": "={{ $json.file.path }} is now {{ ($json.file.size / 1048576).toFixed(1) }} MB"
+				}
+			},
+			"id": "6d3f2b5e-d12a-4346-9c2c-1437e06d2562",
+			"name": "Send to Telegram",
+			"type": "n8n-nodes-base.telegram",
+			"typeVersion": 1.2,
+			"position": [1320, 140]
+		}
+	],
+	"connections": {
+		"New video in Drive folder": { "main": [[{ "node": "Download the video", "type": "main", "index": 0 }]] },
+		"Download the video": { "main": [[{ "node": "Upload to Rendobar", "type": "main", "index": 0 }]] },
+		"Upload to Rendobar": { "main": [[{ "node": "Compress under 25 MB", "type": "main", "index": 0 }]] },
+		"Compress under 25 MB": { "main": [[{ "node": "Wait for the callback", "type": "main", "index": 0 }]] },
+		"Wait for the callback": { "main": [[{ "node": "Fetch job and download file", "type": "main", "index": 0 }]] },
+		"Fetch job and download file": {
+			"main": [[
+				{ "node": "Save the small copy to Drive", "type": "main", "index": 0 },
+				{ "node": "Send to Telegram", "type": "main", "index": 0 }
+			]]
+		}
+	},
+	"settings": { "executionOrder": "v1" }
+}
