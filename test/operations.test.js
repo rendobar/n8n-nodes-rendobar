@@ -10,33 +10,11 @@ const {
 	readJobLogs,
 } = require('../dist/nodes/Rendobar/Rendobar.node.js');
 const { describeFailure } = require('../dist/nodes/Rendobar/shared/failure.js');
-
-const NODE = { id: 'node_a', name: 'Rendobar', type: 'rendobar', typeVersion: 1, position: [0, 0] };
+const { NODE, fakeContext } = require('./helpers');
 
 // Same word list the failure tests use: the n8n guidelines ban these from both
 // halves of a stop.
 const BANNED_WORDS = /\b(error|errors|problem|problems|failure|failures|mistake|mistakes|failed)\b/i;
-
-/**
- * An IExecuteFunctions stand-in carrying only what the transport touches, plus
- * the paths the node actually asked for.
- */
-function fakeContext(responses) {
-	const paths = [];
-	return {
-		paths,
-		getNode: () => NODE,
-		getCredentials: async () => ({ baseUrl: 'https://api.example.com' }),
-		helpers: {
-			httpRequestWithAuthentication: async (_credentialType, options) => {
-				paths.push(options.url);
-				const next = responses.shift();
-				if (next === undefined) throw new Error('the node made an unexpected extra request');
-				return { statusCode: next.statusCode, headers: {}, body: next.body };
-			},
-		},
-	};
-}
 
 const FILE = { url: 'https://cdn.example.com/out.mp4?token=x', path: 'output.mp4', type: 'video' };
 
