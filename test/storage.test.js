@@ -31,10 +31,23 @@ test('nothing configured sends nothing, so the account default still applies', (
 	assert.deepEqual(readDestinations({ destination: [{ storageId: '', path: '' }] }), { ok: true, uris: [] });
 });
 
-test('a path with no connection stops before the job is submitted', () => {
+test('a path with no connection stops before the job is submitted, naming the row', () => {
 	const read = readDestinations({ destination: [{ storageId: ' ', path: 'exports' }] });
 	assert.equal(read.ok, false);
-	assert.match(read.how, /connection/);
+	assert.equal(read.what, 'row 1 has a path but no connection');
+	assert.equal(read.how, 'Pick a connection for that row, or remove it.');
+});
+
+test('the row named in the stop is the position in the list, including rows already sent', () => {
+	const read = readDestinations({
+		destination: [
+			{ storageId: 'prod-media', path: '' },
+			{ storageId: '', path: '' },
+			{ storageId: ' ', path: 'exports' },
+		],
+	});
+	assert.equal(read.ok, false);
+	assert.equal(read.what, 'row 3 has a path but no connection');
 });
 
 test('the same connection and path named twice is one destination', () => {

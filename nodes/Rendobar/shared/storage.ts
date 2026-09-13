@@ -29,16 +29,20 @@ export function readDestinations(raw: unknown): DestinationRead {
 	// `unknown`, not JsonValue: it arrives from readCreateOption, which returns
 	// whatever the saved workflow holds. Read defensively rather than cast.
 	const rows = readValue(raw, 'destination');
+	const list = Array.isArray(rows) ? rows : [];
 	const uris: string[] = [];
-	for (const row of Array.isArray(rows) ? rows : []) {
+	for (let index = 0; index < list.length; index++) {
+		const row = list[index];
 		const id = (readString(row, 'storageId') ?? '').trim();
 		const path = (readString(row, 'path') ?? '').trim().replace(/^\/+/, '');
 		if (id === '' && path === '') continue;
 		if (id === '') {
+			// 1-based and counted over every row, including ones already skipped
+			// or sent, so it matches the position the user sees in the UI.
 			return {
 				ok: false,
-				what: 'A destination has a path but no connection',
-				how: 'Pick the connection to deliver to, or remove that destination.',
+				what: `row ${index + 1} has a path but no connection`,
+				how: 'Pick a connection for that row, or remove it.',
 			};
 		}
 		const uri = path === '' ? `${PREFIX}${id}` : `${PREFIX}${id}/${path}`;
