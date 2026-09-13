@@ -221,15 +221,23 @@ test('Get Logs is not offered the job Output projection', () => {
 });
 
 test("Get Many uses n8n's Return All and Limit copy", () => {
-	const returnAll = properties.find((property) => property.name === 'returnAll');
-	assert.equal(returnAll.displayName, 'Return All');
-	assert.equal(returnAll.description, 'Whether to return all results or only up to a given limit');
+	// Job and Storage File each declare their own Return All and Limit, so
+	// `.find` would only ever check whichever comes first in the array.
+	const returnAlls = properties.filter((property) => property.name === 'returnAll');
+	assert.ok(returnAlls.length >= 2, 'expected a Return All for both Job and Storage File');
+	for (const returnAll of returnAlls) {
+		assert.equal(returnAll.displayName, 'Return All');
+		assert.equal(returnAll.description, 'Whether to return all results or only up to a given limit');
+	}
 
-	const limit = properties.find((property) => property.name === 'limit');
-	assert.equal(limit.displayName, 'Limit');
-	assert.equal(limit.default, 50);
-	assert.equal(limit.description, 'Max number of results to return');
-	assert.equal(limit.typeOptions.minValue, 1);
+	const limits = properties.filter((property) => property.name === 'limit');
+	assert.ok(limits.length >= 2, 'expected a Limit for both Job and Storage File');
+	for (const limit of limits) {
+		assert.equal(limit.displayName, 'Limit');
+		assert.equal(limit.default, 50);
+		assert.equal(limit.description, 'Max number of results to return');
+		assert.equal(limit.typeOptions.minValue, 1);
+	}
 });
 
 test('Get Many offers sorting in its own collection below Filters', () => {

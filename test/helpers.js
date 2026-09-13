@@ -12,13 +12,13 @@ const NODE = { id: 'node_a', name: 'Rendobar', type: 'rendobar', typeVersion: 1,
  * carries the method, URL and qs of every request made, for a test that needs
  * more than the URL alone.
  */
-function fakeContext(responses, { params = {}, items = [{ json: {} }], node = NODE } = {}) {
+function fakeContext(responses, { params = {}, items = [{ json: {} }] } = {}) {
 	const paths = [];
 	const requests = [];
 	return {
 		paths,
 		requests,
-		getNode: () => node,
+		getNode: () => NODE,
 		getCredentials: async () => ({ baseUrl: 'https://api.example.com' }),
 		getInputData: () => items,
 		getExecutionId: () => 'exec_1',
