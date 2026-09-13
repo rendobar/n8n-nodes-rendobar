@@ -55,6 +55,24 @@ test('the same connection and path named twice is one destination', () => {
 	assert.deepEqual(readDestinations({ destination: [row, row] }).uris, ['storage://prod-media/exports']);
 });
 
+test('%, ? and # in a destination path are escaped, in that order, so the URI stays one path segment', () => {
+	assert.deepEqual(readDestinations({ destination: [{ storageId: 'prod-media', path: 'raw/clip#1.mp4' }] }).uris, [
+		'storage://prod-media/raw/clip%231.mp4',
+	]);
+	assert.deepEqual(readDestinations({ destination: [{ storageId: 'prod-media', path: '50%.mp4' }] }).uris, [
+		'storage://prod-media/50%25.mp4',
+	]);
+	assert.deepEqual(readDestinations({ destination: [{ storageId: 'prod-media', path: 'a?b.mp4' }] }).uris, [
+		'storage://prod-media/a%3Fb.mp4',
+	]);
+});
+
+test('a space or unicode in a destination path is sent as written', () => {
+	assert.deepEqual(readDestinations({ destination: [{ storageId: 'prod-media', path: 'raw clips/café.mp4' }] }).uris, [
+		'storage://prod-media/raw clips/café.mp4',
+	]);
+});
+
 test('a connection reads as its id, provider and bucket', () => {
 	assert.equal(connectionLabel({ id: 'raw', provider: 'r2', bucket: 'raw-footage' }), 'raw (r2, raw-footage)');
 });
@@ -97,6 +115,39 @@ test('a listing becomes folder items then file items, each with its storage URI'
 	]);
 	assert.equal(nextStorageCursor(response), 'tok');
 	assert.equal(nextStorageCursor({ data: { folders: [], objects: [], cursor: null } }), undefined);
+});
+
+test('%, ? and # in an object key are escaped in the URI but left raw in path, in that order so a literal % is not doubled', () => {
+	const response = {
+		data: {
+			folders: [],
+			objects: [
+				{ key: 'raw/clip#1.mp4', size: 1, lastModified: null },
+				{ key: '50%.mp4', size: 1, lastModified: null },
+				{ key: 'a?b.mp4', size: 1, lastModified: null },
+			],
+			cursor: null,
+		},
+	};
+	assert.deepEqual(storageEntryItems('prod-media', response), [
+		{ type: 'file', path: 'raw/clip#1.mp4', size: 1, lastModified: null, uri: 'storage://prod-media/raw/clip%231.mp4' },
+		{ type: 'file', path: '50%.mp4', size: 1, lastModified: null, uri: 'storage://prod-media/50%25.mp4' },
+		{ type: 'file', path: 'a?b.mp4', size: 1, lastModified: null, uri: 'storage://prod-media/a%3Fb.mp4' },
+	]);
+});
+
+test('a space or unicode in an object key or folder is sent as written, only %, ? and # are escaped', () => {
+	const response = {
+		data: {
+			folders: ['raw clips/2026/'],
+			objects: [{ key: 'raw clips/café.mp4', size: 1, lastModified: null }],
+			cursor: null,
+		},
+	};
+	assert.deepEqual(storageEntryItems('prod-media', response), [
+		{ type: 'folder', path: 'raw clips/2026/', uri: 'storage://prod-media/raw clips/2026/' },
+		{ type: 'file', path: 'raw clips/café.mp4', size: 1, lastModified: null, uri: 'storage://prod-media/raw clips/café.mp4' },
+	]);
 });
 
 const { fakeContext } = require('./helpers');

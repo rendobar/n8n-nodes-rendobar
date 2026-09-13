@@ -14,6 +14,16 @@ import { rendobarApiRequest, type RendobarContext } from './transport';
 
 const PREFIX = 'storage://';
 
+/**
+ * Escapes the three characters that would otherwise be read as part of the
+ * storage:// URI syntax rather than the path: `%` first, so the escapes this
+ * introduces for `?` and `#` are not themselves re-escaped. Everything else,
+ * spaces and unicode included, stays literal.
+ */
+function escapeStoragePath(path: string): string {
+	return path.replace(/%/g, '%25').replace(/\?/g, '%3F').replace(/#/g, '%23');
+}
+
 export type DestinationRead = { ok: true; uris: string[] } | { ok: false; what: string; how: string };
 
 /**
@@ -45,7 +55,7 @@ export function readDestinations(raw: unknown): DestinationRead {
 				how: 'Pick a connection for that row, or remove it.',
 			};
 		}
-		const uri = path === '' ? `${PREFIX}${id}` : `${PREFIX}${id}/${path}`;
+		const uri = path === '' ? `${PREFIX}${id}` : `${PREFIX}${id}/${escapeStoragePath(path)}`;
 		if (!uris.includes(uri)) uris.push(uri);
 	}
 	return { ok: true, uris };
@@ -72,7 +82,7 @@ export function storageConnectionItem(connection: JsonObject): JsonObject {
 /** One page of `GET /storage/{id}/objects` as items, folders first. */
 export function storageEntryItems(storageId: string, response: JsonValue | undefined): JsonObject[] {
 	const page = unwrapData(response);
-	const uri = (key: string) => `${PREFIX}${storageId}/${key}`;
+	const uri = (key: string) => `${PREFIX}${storageId}/${escapeStoragePath(key)}`;
 	const folders: JsonObject[] = stringsAt(page, 'folders').map((path) => ({ type: 'folder', path, uri: uri(path) }));
 	const files: JsonObject[] = objectsAt(page, 'objects').flatMap((object) => {
 		const key = stringAt(object, 'key');
