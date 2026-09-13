@@ -45,10 +45,12 @@ import {
 	type JsonValue,
 } from './shared/json';
 import { buildCallback, waitAndCallbackConflict } from './shared/callback';
+import { readDestinations } from './shared/storage';
 import { getJobTypes } from './listSearch/getJobTypes';
 import { getJobs } from './listSearch/getJobs';
 import { getJobFields } from './methods/getJobFields';
 import { getJobInputFields } from './methods/getJobInputFields';
+import { getStorageDestinations } from './methods/getStorageDestinations';
 import {
 	ASSET_FIELDS,
 	buildAssetItem,
@@ -983,6 +985,42 @@ export class Rendobar implements INodeType {
 						"Where Rendobar sends the finished job. Use a Wait node's resume URL here and n8n parks the execution instead of holding a worker open. Turn 'Wait for Completion' off when you use this.",
 				},
 				{
+					displayName: 'Destinations',
+					name: 'destinations',
+					type: 'fixedCollection',
+					typeOptions: { multipleValues: true },
+					default: {},
+					placeholder: 'Add Destination',
+					description:
+						"Buckets connected on Rendobar's Storage page to write the output to once the job completes. Leave empty to use the account's default destination, if one is set.",
+					options: [
+						{
+							displayName: 'Destination',
+							name: 'destination',
+							values: [
+								{
+									displayName: 'Connection Name or ID',
+									name: 'storageId',
+									type: 'options',
+									typeOptions: { loadOptionsMethod: 'getStorageDestinations' },
+									default: '',
+									description:
+										'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+								},
+								{
+									displayName: 'Folder or Path',
+									name: 'path',
+									type: 'string',
+									default: '',
+									placeholder: 'e.g. exports/{date}/{source_name}.{ext}',
+									description:
+										"Where in the bucket. Leave empty for the connection's own output path. A folder keeps that path's file name, and a path with {job_id}, {ext}, {source_name} or {date} is used as written.",
+								},
+							],
+						},
+					],
+				},
+				{
 					displayName: 'Idempotency Key',
 					name: 'idempotencyKey',
 					type: 'string',
@@ -1315,6 +1353,7 @@ export class Rendobar implements INodeType {
 
 	methods = {
 		listSearch: { getJobTypes, getJobs },
+		loadOptions: { getStorageDestinations },
 		resourceMapping: { getJobFields, getJobInputFields },
 	};
 
@@ -1508,6 +1547,12 @@ export class Rendobar implements INodeType {
 						throw invalidParameter(node, clash.parameter, clash.what, clash.how, i);
 					}
 
+					// readCreateOption returns unknown, which readDestinations reads defensively.
+					const destinations = readDestinations(readCreateOption(this, 'destinations', i, {}));
+					if (!destinations.ok) {
+						throw invalidParameter(node, 'Destinations', destinations.what, destinations.how, i);
+					}
+
 					const submission: JsonObject = {
 						type: jobType,
 						inputs: media,
@@ -1517,6 +1562,9 @@ export class Rendobar implements INodeType {
 						// two requests, and `POST /jobs` registers the callback only for a
 						// freshly admitted job.
 						...(callback.callback === undefined ? {} : { callback: callback.callback }),
+						// Also part of the fingerprint: the same job delivered to two
+						// different places is two submissions and must not share a key.
+						...(destinations.uris.length === 0 ? {} : { destinations: destinations.uris }),
 					};
 
 					// The key must be stable across n8n's retry of this step, so a stall

@@ -85,3 +85,43 @@ test('a listing becomes folder items then file items, each with its storage URI'
 	assert.equal(nextStorageCursor(response), 'tok');
 	assert.equal(nextStorageCursor({ data: { folders: [], objects: [], cursor: null } }), undefined);
 });
+
+const { fakeContext } = require('./helpers');
+const { getStorageDestinations } = require('../dist/nodes/Rendobar/methods/getStorageDestinations.js');
+
+test('the destination list offers only connections a job can write to, sorted', async () => {
+	const options = await getStorageDestinations.call(
+		fakeContext([
+			{
+				statusCode: 200,
+				body: {
+					data: [
+						{ id: 'zeta', provider: 's3', bucket: 'z' },
+						{ id: 'alpha', provider: 'r2', bucket: 'a' },
+						{ id: 'read-only', provider: 's3', bucket: 'r', access: 'read' },
+						{ id: 'setting-up', provider: 's3', bucket: 'w', pending: true },
+					],
+					meta: { total: 4 },
+				},
+			},
+		]),
+	);
+	assert.deepEqual(options, [
+		{ name: 'alpha (r2, a)', value: 'alpha' },
+		{ name: 'zeta (s3, z)', value: 'zeta' },
+	]);
+});
+
+test('a key without storage access is told to make a new one', async () => {
+	await assert.rejects(
+		getStorageDestinations.call(
+			fakeContext([
+				{
+					statusCode: 403,
+					body: { error: { code: 'INSUFFICIENT_SCOPE', message: 'This endpoint requires the storage:read scope.' } },
+				},
+			]),
+		),
+		(thrown) => /new key/i.test(`${thrown.description ?? ''} ${thrown.message ?? ''}`),
+	);
+});

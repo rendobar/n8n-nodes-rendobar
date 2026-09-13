@@ -10,6 +10,7 @@ import {
 	type JsonObject,
 	type JsonValue,
 } from './json';
+import { rendobarApiRequest, type RendobarContext } from './transport';
 
 const PREFIX = 'storage://';
 
@@ -89,4 +90,10 @@ export function storageEntryItems(storageId: string, response: JsonValue | undef
 /** The cursor for the next page, or undefined on the last one. */
 export function nextStorageCursor(response: JsonValue | undefined): string | undefined {
 	return stringAt(unwrapData(response), 'cursor');
+}
+
+/** Every connection on the account. One read for the pickers and the Get Many operation alike. */
+export async function loadStorageConnections(this: RendobarContext, itemIndex?: number): Promise<JsonObject[]> {
+	const response = await rendobarApiRequest.call(this, { method: 'GET', path: '/storage', idempotent: true }, itemIndex);
+	return objectsAt(response, 'data');
 }

@@ -344,3 +344,9 @@ test('any other rejection is raised as it always was', async () => {
 	);
 	assert.deepEqual(context.keys, ['k-base']);
 });
+
+test('the same job delivered to a different place is a different submission', () => {
+	const delivered = { ...compress, destinations: ['storage://prod-media'] };
+	assert.notEqual(key(toolCall, compress), key(toolCall, delivered));
+	assert.notEqual(key(toolCall, delivered), key(toolCall, { ...compress, destinations: ['storage://archive'] }));
+});

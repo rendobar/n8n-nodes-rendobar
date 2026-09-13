@@ -485,6 +485,9 @@ test('every dropdown default is one of the values it offers', () => {
 	// notice and fix.
 	for (const property of everyProperty) {
 		if (property.type !== 'options' && property.type !== 'multiOptions') continue;
+		// A dropdown loaded live from the account (loadOptionsMethod) has no static
+		// list to check a default against.
+		if (!Array.isArray(property.options)) continue;
 		const offered = new Set(property.options.map((option) => option.value));
 		const defaults = Array.isArray(property.default) ? property.default : [property.default];
 
@@ -504,6 +507,9 @@ test('every dropdown lists its options alphabetically', () => {
 	for (const property of everyProperty) {
 		if (property.type !== 'options' && property.type !== 'multiOptions') continue;
 		if (exempt.has(property.name)) continue;
+		// A dropdown loaded live from the account (loadOptionsMethod) has no static
+		// list to sort; getStorageDestinations sorts it itself.
+		if (!Array.isArray(property.options)) continue;
 
 		const names = property.options.map((option) => option.name);
 		assert.deepEqual(
