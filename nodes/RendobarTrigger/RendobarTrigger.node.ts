@@ -95,7 +95,7 @@ export class RendobarTrigger implements INodeType {
 		// n8n's node details panel takes its headline from the trigger, so this line
 		// stands for the whole package and has to name the events.
 		description:
-			'Starts the workflow when a Rendobar media job completes, stops or is cancelled, or when the account balance runs low',
+			'Starts the workflow when a Rendobar media job completes, stops or is cancelled, when a storage delivery succeeds, fails or settles, or when the account balance runs low',
 		defaults: { name: 'Rendobar Trigger' },
 		inputs: [],
 		outputs: [NodeConnectionTypes.Main],
@@ -122,6 +122,9 @@ export class RendobarTrigger implements INodeType {
 					{ name: 'Job Cancelled', value: 'job.cancelled' },
 					{ name: 'Job Completed', value: 'job.completed' },
 					{ name: 'Job Created', value: 'job.created' },
+					{ name: 'Job Deliveries Settled', value: 'job.deliveries_settled' },
+					{ name: 'Job Delivery Failed', value: 'job.delivery_failed' },
+					{ name: 'Job Delivery Succeeded', value: 'job.delivery_succeeded' },
 					{ name: 'Job Failed', value: 'job.failed' },
 					{ name: 'Job Started', value: 'job.started' },
 				],
@@ -278,7 +281,10 @@ export class RendobarTrigger implements INodeType {
 
 	async webhook(this: IWebhookFunctions): Promise<IWebhookResponseData> {
 		// The delivered envelope is passed through whole: { version, event,
-		// deliveryId, timestamp, orgId, data }, where `data` carries the job.
+		// deliveryId, timestamp, orgId, data }. `data` is the job for
+		// job.created/started/completed/failed/cancelled, { jobId, storageId,
+		// status, ... } for the two per-delivery events, and { jobId, deliveries }
+		// for job.deliveries_settled.
 		return {
 			workflowData: [this.helpers.returnJsonArray([this.getBodyData()])],
 		};

@@ -51,7 +51,11 @@
 		"logs",
 		"balance",
 		"credits",
-		"account"
+		"account",
+		"S3",
+		"R2",
+		"bucket",
+		"storage"
 	],
 	"resources": {
 		"credentialDocumentation": [

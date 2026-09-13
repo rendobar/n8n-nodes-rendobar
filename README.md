@@ -45,6 +45,7 @@ Operations are grouped by resource.
   - Optional **Wait for Completion**: poll until the job is done and return its result. It holds the execution open, so it suits jobs of a few minutes. Configure **Poll Interval (Seconds)** and **Max Wait (Seconds)**.
   - Optional **Callback URL** and **Callback Headers**: have Rendobar post the finished job somewhere instead of waiting for it. Paired with a Wait node this is how a job running for hours is handled. See [Long jobs](#long-jobs-a-callback-and-a-wait-node).
   - The two are alternatives, not a pair. Setting **Callback URL** while **Wait for Completion** is on is refused before the job is submitted, because a call that arrives while this node is still polling cannot be answered and is not retried long enough to survive the wait.
+  - Optional **Destinations**: rows of a connection from Rendobar's [Storage page](https://app.rendobar.com/storage) and an optional folder or path. The output is written to each one once the job completes, and the job's `deliveries` reports every write. Deliveries start after completion, so a job read at that moment usually shows them `pending`. Start a second workflow from **Job Deliveries Settled** on the trigger to act once they land.
 - **Get**: retrieve a job with its status and result.
   - **Job** is a resource locator: pick from your recent jobs, paste an ID, or paste a dashboard link (`https://app.rendobar.com/jobs/...`) and the node extracts the ID. All three modes accept expressions.
   - Optional **Download Output File**: fetch the headline result file (`file.url`) onto the item so the next node can use it directly. The download is streamed to n8n's binary store rather than buffered, so a multi-gigabyte result does not have to fit in memory. Applies only to finished jobs that produced a file.
@@ -75,6 +76,16 @@ Operations are grouped by resource.
 - **Upload**: send a file from a previous node to Rendobar and get back a URL to use as a job input. Files are ephemeral and auto-delete after 24 hours. Pair it with Job > Create: upload, then reference the returned `url` in the next node's inputs.
   - The file is read a chunk at a time and sent straight to storage, so peak memory stays at one upload part (100 MB) no matter how large the file is. On an n8n running in filesystem or S3 binary mode the file is never loaded into the process at all.
 
+#### Resource: Storage Connection
+
+- **Get Many**: the buckets connected on the Storage page, one item each: `id`, `provider`, `bucket`, `region`, `access` (`deliver` or `read`), `defaultDestination` and `pending`. Credentials and endpoints are never returned.
+
+#### Resource: Storage File
+
+- **Get Many**: the folders and files under **Folder** in a connected bucket, folders first within each page. Each item has `type`, `path` and a `uri` such as `storage://prod-media/raw/clip.mp4` that a Job > Create input accepts. Files also carry `size` and `lastModified`.
+
+An API key made before September 13, 2026 cannot read storage. Create a new key and update the credential.
+
 #### Anything else in the API
 
 The node models jobs, files and the account. Everything else the API exposes (usage breakdowns, share links, webhook deliveries, team and organization management) is reached with **Custom API Call**, which n8n adds to the **Resource** and **Operation** dropdowns by itself because the Rendobar credential carries its own authentication. Choosing it points you at the HTTP Request node with the credential already applied, so you can call any endpoint without handling a key. This package therefore ships no Custom API Call operation of its own.
@@ -87,7 +98,7 @@ The **Job** and **File** resources take an **Output** parameter, because a raw j
   - Job: `id`, `type`, `status`, `cost`, `createdAt`, `completedAt`, plus either the result (`data`, `file`, `files`, `expiresAt`) or, for a job that stopped, `error`. Never more than ten fields on one item.
   - File: `id`, `url`, `filename`, `contentType`, `mediaType`, `sizeBytes`, `status`, `expiresAt`, `createdAt`.
 - **Raw**: every field the API returns.
-- **Selected Fields**: only the fields you pick. The ID is always included, whether or not you picked it, so an agent can come back for the rest of the record later.
+- **Selected Fields**: only the fields you pick, such as `deliveries` for what a Destinations job wrote. The ID is always included, whether or not you picked it, so an agent can come back for the rest of the record later.
 
 Neither **Get Logs** nor the **Account** resource takes one. **Get Logs** emits log entries rather than a job, so both the projection and the field list beneath it would describe the wrong record, and the parameter is hidden on that operation. The Account item carries seven top-level fields, which is not a payload with anything to trim.
 
@@ -104,7 +115,7 @@ Set **Output** to **Raw** when you also need `output`, `steps`, `region`, timing
 
 ### Rendobar Trigger
 
-Starts a workflow when a Rendobar media job completes, stops or is cancelled, or when the account balance runs low. Select the events to listen for: **Job Created**, **Job Started**, **Job Completed**, **Job Failed**, **Job Cancelled**, **Balance Low** and **Balance Depleted**. On activation the node registers its webhook URL with Rendobar and removes it on deactivation.
+Starts a workflow when a Rendobar media job completes, stops or is cancelled, when a storage delivery succeeds, fails or settles, or when the account balance runs low. Select the events to listen for: **Job Created**, **Job Started**, **Job Completed**, **Job Failed**, **Job Cancelled**, **Job Delivery Succeeded**, **Job Delivery Failed**, **Job Deliveries Settled**, **Balance Low** and **Balance Depleted**. On activation the node registers its webhook URL with Rendobar and removes it on deactivation.
 
 Pair **Job Failed** with **Job > Get Logs** to see what the runner reported, and **Balance Low** with **Account > Get** to find out how low.
 

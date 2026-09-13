@@ -221,15 +221,23 @@ test('Get Logs is not offered the job Output projection', () => {
 });
 
 test("Get Many uses n8n's Return All and Limit copy", () => {
-	const returnAll = properties.find((property) => property.name === 'returnAll');
-	assert.equal(returnAll.displayName, 'Return All');
-	assert.equal(returnAll.description, 'Whether to return all results or only up to a given limit');
+	// Job and Storage File each declare their own Return All and Limit, so
+	// `.find` would only ever check whichever comes first in the array.
+	const returnAlls = properties.filter((property) => property.name === 'returnAll');
+	assert.ok(returnAlls.length >= 2, 'expected a Return All for both Job and Storage File');
+	for (const returnAll of returnAlls) {
+		assert.equal(returnAll.displayName, 'Return All');
+		assert.equal(returnAll.description, 'Whether to return all results or only up to a given limit');
+	}
 
-	const limit = properties.find((property) => property.name === 'limit');
-	assert.equal(limit.displayName, 'Limit');
-	assert.equal(limit.default, 50);
-	assert.equal(limit.description, 'Max number of results to return');
-	assert.equal(limit.typeOptions.minValue, 1);
+	const limits = properties.filter((property) => property.name === 'limit');
+	assert.ok(limits.length >= 2, 'expected a Limit for both Job and Storage File');
+	for (const limit of limits) {
+		assert.equal(limit.displayName, 'Limit');
+		assert.equal(limit.default, 50);
+		assert.equal(limit.description, 'Max number of results to return');
+		assert.equal(limit.typeOptions.minValue, 1);
+	}
 });
 
 test('Get Many offers sorting in its own collection below Filters', () => {
@@ -248,12 +256,13 @@ test('Get Many offers sorting in its own collection below Filters', () => {
 });
 
 test('a single item is chosen through a Resource Locator defaulting to the list', () => {
-	// Both Job Type and Job pick exactly one thing, which the guidelines
-	// say a Resource Locator is for, and the default mode has to be From List.
+	// Job Type, Job and Connection each pick exactly one thing, which the
+	// guidelines say a Resource Locator is for, and the default mode has to be
+	// From List.
 	const locators = properties.filter((property) => property.type === 'resourceLocator');
 	assert.deepEqual(
 		locators.map((property) => property.name).sort(),
-		['jobId', 'jobType'],
+		['jobId', 'jobType', 'storageId'],
 	);
 
 	for (const locator of locators) {
@@ -485,6 +494,9 @@ test('every dropdown default is one of the values it offers', () => {
 	// notice and fix.
 	for (const property of everyProperty) {
 		if (property.type !== 'options' && property.type !== 'multiOptions') continue;
+		// A dropdown loaded live from the account (loadOptionsMethod) has no static
+		// list to check a default against.
+		if (!Array.isArray(property.options)) continue;
 		const offered = new Set(property.options.map((option) => option.value));
 		const defaults = Array.isArray(property.default) ? property.default : [property.default];
 
@@ -504,6 +516,9 @@ test('every dropdown lists its options alphabetically', () => {
 	for (const property of everyProperty) {
 		if (property.type !== 'options' && property.type !== 'multiOptions') continue;
 		if (exempt.has(property.name)) continue;
+		// A dropdown loaded live from the account (loadOptionsMethod) has no static
+		// list to sort; getStorageDestinations sorts it itself.
+		if (!Array.isArray(property.options)) continue;
 
 		const names = property.options.map((option) => option.name);
 		assert.deepEqual(

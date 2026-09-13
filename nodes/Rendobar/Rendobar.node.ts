@@ -45,10 +45,19 @@ import {
 	type JsonValue,
 } from './shared/json';
 import { buildCallback, waitAndCallbackConflict } from './shared/callback';
+import {
+	loadStorageConnections,
+	nextStorageCursor,
+	readDestinations,
+	storageConnectionItem,
+	storageEntryItems,
+} from './shared/storage';
 import { getJobTypes } from './listSearch/getJobTypes';
 import { getJobs } from './listSearch/getJobs';
+import { searchStorageConnections } from './listSearch/searchStorageConnections';
 import { getJobFields } from './methods/getJobFields';
 import { getJobInputFields } from './methods/getJobInputFields';
+import { getStorageDestinations } from './methods/getStorageDestinations';
 import {
 	ASSET_FIELDS,
 	buildAssetItem,
@@ -711,6 +720,8 @@ export class Rendobar implements INodeType {
 						name: 'Job',
 						value: 'job',
 					},
+					{ name: 'Storage Connection', value: 'storageConnection' },
+					{ name: 'Storage File', value: 'storageFile' },
 				],
 				default: 'job',
 			},
@@ -794,6 +805,99 @@ export class Rendobar implements INodeType {
 					},
 				],
 				default: 'getAccount',
+			},
+			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				displayOptions: { show: { resource: ['storageConnection'] } },
+				options: [
+					{
+						name: 'Get Many',
+						value: 'getStorageConnections',
+						action: 'Get many storage connections',
+						description: "Retrieve the buckets connected on Rendobar's Storage page",
+					},
+				],
+				default: 'getStorageConnections',
+			},
+			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				displayOptions: { show: { resource: ['storageFile'] } },
+				options: [
+					{
+						name: 'Get Many',
+						value: 'getStorageFiles',
+						action: 'Get many storage files',
+						description: 'Retrieve the folders and files under a folder in a connected bucket',
+					},
+				],
+				default: 'getStorageFiles',
+			},
+			{
+				displayName: 'Connection',
+				name: 'storageId',
+				type: 'resourceLocator',
+				default: { mode: 'list', value: '' },
+				required: true,
+				displayOptions: { show: { resource: ['storageFile'], operation: ['getStorageFiles'] } },
+				description: 'The connected bucket to list',
+				modes: [
+					{
+						displayName: 'From List',
+						name: 'list',
+						type: 'list',
+						typeOptions: { searchListMethod: 'searchStorageConnections', searchable: true },
+					},
+					{
+						displayName: 'By ID',
+						name: 'id',
+						type: 'string',
+						placeholder: 'e.g. prod-media',
+						// The same rule the API applies to a connection id, so a typo stops here.
+						validation: [
+							{
+								type: 'regex',
+								properties: {
+									regex: '^[a-z0-9-]{2,40}$',
+									errorMessage: 'Use the connection ID from the Storage page: 2 to 40 lowercase letters, digits or hyphens',
+								},
+							},
+						],
+					},
+				],
+			},
+			{
+				displayName: 'Folder',
+				name: 'folder',
+				type: 'string',
+				default: '',
+				placeholder: 'e.g. raw/2026/',
+				displayOptions: { show: { resource: ['storageFile'], operation: ['getStorageFiles'] } },
+				description: 'Folder to list, ending in a slash. Leave empty for the top of the bucket.',
+			},
+			{
+				displayName: 'Return All',
+				name: 'returnAll',
+				type: 'boolean',
+				default: false,
+				displayOptions: { show: { resource: ['storageFile'], operation: ['getStorageFiles'] } },
+				description: 'Whether to return all results or only up to a given limit',
+			},
+			{
+				displayName: 'Limit',
+				name: 'limit',
+				type: 'number',
+				default: 50,
+				typeOptions: { minValue: 1 },
+				displayOptions: {
+					show: { resource: ['storageFile'], operation: ['getStorageFiles'], returnAll: [false] },
+				},
+				description: 'Max number of results to return',
 			},
 			{
 				displayName: 'Job Type',
@@ -981,6 +1085,42 @@ export class Rendobar implements INodeType {
 					placeholder: 'e.g. {{ $execution.resumeUrl }}',
 					description:
 						"Where Rendobar sends the finished job. Use a Wait node's resume URL here and n8n parks the execution instead of holding a worker open. Turn 'Wait for Completion' off when you use this.",
+				},
+				{
+					displayName: 'Destinations',
+					name: 'destinations',
+					type: 'fixedCollection',
+					typeOptions: { multipleValues: true },
+					default: {},
+					placeholder: 'Add Destination',
+					description:
+						"Buckets connected on Rendobar's Storage page to write the output to once the job completes. Leave empty to use the account's default destination, if one is set.",
+					options: [
+						{
+							displayName: 'Destination',
+							name: 'destination',
+							values: [
+								{
+									displayName: 'Connection Name or ID',
+									name: 'storageId',
+									type: 'options',
+									typeOptions: { loadOptionsMethod: 'getStorageDestinations' },
+									default: '',
+									description:
+										'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+								},
+								{
+									displayName: 'Folder or Path',
+									name: 'path',
+									type: 'string',
+									default: '',
+									placeholder: 'e.g. exports/{date}/{source_name}.{ext}',
+									description:
+										"Where in the bucket. Leave empty for the connection's own output path. A folder keeps that path's file name, and a path with {job_id}, {ext}, {source_name} or {date} is used as written.",
+								},
+							],
+						},
+					],
 				},
 				{
 					displayName: 'Idempotency Key',
@@ -1314,7 +1454,8 @@ export class Rendobar implements INodeType {
 	};
 
 	methods = {
-		listSearch: { getJobTypes, getJobs },
+		listSearch: { getJobTypes, getJobs, searchStorageConnections },
+		loadOptions: { getStorageDestinations },
 		resourceMapping: { getJobFields, getJobInputFields },
 	};
 
@@ -1357,6 +1498,43 @@ export class Rendobar implements INodeType {
 						i,
 					);
 					returnData.push({ json: unwrapData(account) ?? {}, pairedItem: { item: i } });
+					continue;
+				}
+
+				if (operation === 'getStorageConnections') {
+					for (const connection of await loadStorageConnections.call(this, i)) {
+						returnData.push({ json: storageConnectionItem(connection), pairedItem: { item: i } });
+					}
+					continue;
+				}
+
+				if (operation === 'getStorageFiles') {
+					const storageId = requireIdentifier(node, readLocator(this, 'storageId', i), 'Connection', i);
+					// The API accepts only an empty prefix or one ending in '/', and
+					// rejects a leading one, but a folder typed or pasted as '/raw' or
+					// 'raw' is the readable way to write it.
+					let folder = String(this.getNodeParameter('folder', i, '')).trim().replace(/^\/+/, '');
+					if (folder !== '' && !folder.endsWith('/')) folder += '/';
+					const returnAll = this.getNodeParameter('returnAll', i, false) === true;
+					const limit = returnAll ? Infinity : toWholeNumber(this.getNodeParameter('limit', i, 50), 50, 1);
+					let cursor: string | undefined;
+					let emitted = 0;
+					do {
+						const qs: Record<string, string> = {};
+						if (folder !== '') qs.prefix = folder;
+						if (cursor !== undefined) qs.cursor = cursor;
+						const page = await rendobarApiRequest.call(
+							this,
+							{ method: 'GET', path: `/storage/${encodeURIComponent(storageId)}/objects`, qs, idempotent: true },
+							i,
+						);
+						for (const entry of storageEntryItems(storageId, page)) {
+							if (emitted >= limit) break;
+							returnData.push({ json: entry, pairedItem: { item: i } });
+							emitted++;
+						}
+						cursor = nextStorageCursor(page);
+					} while (cursor !== undefined && emitted < limit);
 					continue;
 				}
 
@@ -1508,6 +1686,12 @@ export class Rendobar implements INodeType {
 						throw invalidParameter(node, clash.parameter, clash.what, clash.how, i);
 					}
 
+					// readCreateOption returns unknown, which readDestinations reads defensively.
+					const destinations = readDestinations(readCreateOption(this, 'destinations', i, {}));
+					if (!destinations.ok) {
+						throw invalidParameter(node, 'Destinations', destinations.what, destinations.how, i);
+					}
+
 					const submission: JsonObject = {
 						type: jobType,
 						inputs: media,
@@ -1517,6 +1701,9 @@ export class Rendobar implements INodeType {
 						// two requests, and `POST /jobs` registers the callback only for a
 						// freshly admitted job.
 						...(callback.callback === undefined ? {} : { callback: callback.callback }),
+						// Also part of the fingerprint: the same job delivered to two
+						// different places is two submissions and must not share a key.
+						...(destinations.uris.length === 0 ? {} : { destinations: destinations.uris }),
 					};
 
 					// The key must be stable across n8n's retry of this step, so a stall

@@ -39,6 +39,7 @@ export const JOB_FIELDS = [
 	'cost',
 	'createdAt',
 	'data',
+	'deliveries',
 	'dispatchedAt',
 	'error',
 	'eta',

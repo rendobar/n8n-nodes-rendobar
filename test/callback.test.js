@@ -276,12 +276,12 @@ test('the delivery controls live together under Options, alphabetised', () => {
 	// (node-param-collection-type-unsorted-items) because the user meets them as
 	// a dropdown, not as a column, so intent-ordering has nothing to convey.
 	//
-	// What still has to hold is that all six are in one place and none escaped.
+	// What still has to hold is that all seven are in one place and none escaped.
 	const names = collectionChildren('options').map((option) => option.name);
 
 	assert.deepEqual(
 		[...names].sort(),
-		['callbackHeaders', 'callbackUrl', 'idempotencyKey', 'maxWait', 'pollInterval', 'waitForCompletion'],
+		['callbackHeaders', 'callbackUrl', 'destinations', 'idempotencyKey', 'maxWait', 'pollInterval', 'waitForCompletion'],
 		'a Create option is missing from the collection or an extra one arrived',
 	);
 	assert.deepEqual(

@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.0 - 2026-09-13
+
+### Added
+
+- `Job > Create` gains a **Destinations** option, one row per connection made
+  on the Storage page with an optional folder or path. The output is written
+  to every row once the job completes, sent to the API as `destinations`, and
+  folded into the idempotency fingerprint alongside every other submitted
+  value, so two submissions naming different destinations are two different
+  jobs. A row with a path but no connection stops the submission before a job
+  is created, naming which one, for example `row 2 has a path but no connection`.
+- **Output > Selected Fields** can now pick `deliveries`, the report of every
+  write a Destinations job made. It sits alongside the job's other raw fields
+  and is not part of the Simplified projection, since it only exists once a
+  job with destinations has completed.
+- The trigger adds three events for a job with destinations. **Job Delivery
+  Succeeded** and **Job Delivery Failed** fire once per write, and **Job
+  Deliveries Settled** fires once, when the last one resolves.
+- Two resources read what is connected on the Storage page. **Storage
+  Connection**'s **Get Many** lists the connections themselves, and **Storage
+  File**'s **Get Many** lists the folders and files inside one. Each file
+  carries a `storage://` URI a job input accepts, and a folder's `path` fits
+  a Destinations row's **Folder or Path**.
+- An API key made before September 13, 2026 cannot read storage. Create a new
+  key and update the credential before using Storage Connection, Storage
+  File or the connection list under Destinations.
+
 ## 0.5.2 - 2026-09-06
 
 ### Changed

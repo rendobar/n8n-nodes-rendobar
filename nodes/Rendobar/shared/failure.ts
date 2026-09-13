@@ -90,6 +90,8 @@ const DESCRIPTIONS: Record<string, string> = {
 		"Open this node's Rendobar credential and confirm the API key is the full key from the dashboard and has not been revoked.",
 	FORBIDDEN:
 		'This API key is not allowed to do that. Check the key and the account status in the Rendobar dashboard.',
+	INSUFFICIENT_SCOPE:
+		"This API key is missing a permission this needs. Create a new key in the Rendobar dashboard, where every permission is on by default, and update this node's credential.",
 	ORG_SUSPENDED:
 		'The Rendobar account is suspended. Settle the balance in the dashboard, then run the workflow again.',
 	PLAN_LIMIT:
