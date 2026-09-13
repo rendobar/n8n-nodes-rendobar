@@ -227,3 +227,9 @@ test('ASSET_FIELDS is sorted, deduplicated, and covers the simplified set', () =
 		assert.ok(ASSET_FIELDS.includes(field), `${field} missing from ASSET_FIELDS`);
 	}
 });
+
+test('Selected Fields can pick the storage deliveries', () => {
+	const { JOB_FIELDS } = require('../dist/nodes/Rendobar/shared/output.js');
+	assert.ok(JOB_FIELDS.includes('deliveries'));
+	assert.deepEqual([...JOB_FIELDS], [...JOB_FIELDS].sort());
+});
