@@ -17,6 +17,9 @@ const API_EVENT_TYPES = [
 	'job.completed',
 	'job.failed',
 	'job.cancelled',
+	'job.delivery_succeeded',
+	'job.delivery_failed',
+	'job.deliveries_settled',
 	'balance.low',
 	'balance.depleted',
 ];
@@ -59,6 +62,15 @@ test('the default event selection is a subset of the offered events', () => {
 	for (const value of events.default) {
 		assert.ok(offered.includes(value), `${value} defaulted but not offered`);
 	}
+});
+
+test('the trigger offers the storage delivery events', () => {
+	const properties = new RendobarTrigger().description.properties;
+	const events = properties.find((property) => property.name === 'events');
+	const offered = events.options.map((option) => option.value);
+	assert.ok(offered.includes('job.delivery_succeeded'), 'job.delivery_succeeded is not offered');
+	assert.ok(offered.includes('job.delivery_failed'), 'job.delivery_failed is not offered');
+	assert.ok(offered.includes('job.deliveries_settled'), 'job.deliveries_settled is not offered');
 });
 
 const { registrationMatches } = require('../dist/nodes/RendobarTrigger/RendobarTrigger.node.js');
