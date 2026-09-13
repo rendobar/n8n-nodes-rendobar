@@ -151,3 +151,83 @@ test('the node offers Storage Connection and Storage File, each with Get Many', 
 	assert.ok(values.includes('getStorageConnections'));
 	assert.ok(values.includes('getStorageFiles'));
 });
+
+test('Storage File Get Many with a limit stops after one page once it is full, folder first', async () => {
+	const body = {
+		data: {
+			folders: ['raw/2026/'],
+			objects: [
+				{ key: 'raw/a.mp4', size: 10, lastModified: null },
+				{ key: 'raw/b.mp4', size: 20, lastModified: null },
+				{ key: 'raw/c.mp4', size: 30, lastModified: null },
+			],
+			cursor: 'more',
+		},
+	};
+	const context = fakeContext([{ statusCode: 200, body }], {
+		params: {
+			operation: 'getStorageFiles',
+			storageId: 'prod-media',
+			folder: 'raw/2026/',
+			returnAll: false,
+			limit: 2,
+		},
+	});
+
+	const [items] = await new Rendobar().execute.call(context);
+
+	// A non-null cursor came back, but Limit was already full: no second page
+	// is fetched for rows the workflow could never receive.
+	assert.equal(context.requests.length, 1);
+	assert.equal(context.requests[0].method, 'GET');
+	assert.equal(context.requests[0].url, 'https://api.example.com/storage/prod-media/objects');
+	assert.deepEqual(context.requests[0].qs, { prefix: 'raw/2026/' });
+	assert.deepEqual(
+		items.map((item) => item.json),
+		[
+			{ type: 'folder', path: 'raw/2026/', uri: 'storage://prod-media/raw/2026/' },
+			{ type: 'file', path: 'raw/a.mp4', size: 10, lastModified: null, uri: 'storage://prod-media/raw/a.mp4' },
+		],
+	);
+});
+
+test('Storage File Get Many with Return All walks every page on the cursor it is handed', async () => {
+	const page1 = {
+		data: {
+			folders: ['raw/2026/'],
+			objects: [{ key: 'raw/a.mp4', size: 10, lastModified: null }],
+			cursor: 'c2',
+		},
+	};
+	const page2 = {
+		data: { folders: [], objects: [{ key: 'raw/b.mp4', size: 20, lastModified: null }], cursor: null },
+	};
+	const context = fakeContext(
+		[
+			{ statusCode: 200, body: page1 },
+			{ statusCode: 200, body: page2 },
+		],
+		{
+			params: {
+				operation: 'getStorageFiles',
+				storageId: 'prod-media',
+				folder: 'raw/2026/',
+				returnAll: true,
+			},
+		},
+	);
+
+	const [items] = await new Rendobar().execute.call(context);
+
+	assert.equal(context.requests.length, 2);
+	assert.deepEqual(context.requests[0].qs, { prefix: 'raw/2026/' });
+	assert.deepEqual(context.requests[1].qs, { prefix: 'raw/2026/', cursor: 'c2' });
+	assert.deepEqual(
+		items.map((item) => item.json),
+		[
+			{ type: 'folder', path: 'raw/2026/', uri: 'storage://prod-media/raw/2026/' },
+			{ type: 'file', path: 'raw/a.mp4', size: 10, lastModified: null, uri: 'storage://prod-media/raw/a.mp4' },
+			{ type: 'file', path: 'raw/b.mp4', size: 20, lastModified: null, uri: 'storage://prod-media/raw/b.mp4' },
+		],
+	);
+});
