@@ -248,12 +248,13 @@ test('Get Many offers sorting in its own collection below Filters', () => {
 });
 
 test('a single item is chosen through a Resource Locator defaulting to the list', () => {
-	// Both Job Type and Job pick exactly one thing, which the guidelines
-	// say a Resource Locator is for, and the default mode has to be From List.
+	// Job Type, Job and Connection each pick exactly one thing, which the
+	// guidelines say a Resource Locator is for, and the default mode has to be
+	// From List.
 	const locators = properties.filter((property) => property.type === 'resourceLocator');
 	assert.deepEqual(
 		locators.map((property) => property.name).sort(),
-		['jobId', 'jobType'],
+		['jobId', 'jobType', 'storageId'],
 	);
 
 	for (const locator of locators) {

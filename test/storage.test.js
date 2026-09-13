@@ -125,3 +125,29 @@ test('a key without storage access is told to make a new one', async () => {
 		(thrown) => /new key/i.test(`${thrown.description ?? ''} ${thrown.message ?? ''}`),
 	);
 });
+
+const { searchStorageConnections } = require('../dist/nodes/Rendobar/listSearch/searchStorageConnections.js');
+const { Rendobar } = require('../dist/nodes/Rendobar/Rendobar.node.js');
+
+test('the connection picker lists every connection, read-only ones included, and filters by the typed term', async () => {
+	const body = {
+		data: [
+			{ id: 'prod-media', provider: 's3', bucket: 'acme' },
+			{ id: 'raw', provider: 'r2', bucket: 'raw', access: 'read' },
+		],
+		meta: { total: 2 },
+	};
+	const all = await searchStorageConnections.call(fakeContext([{ statusCode: 200, body }]));
+	assert.deepEqual(all.results.map((r) => r.value), ['prod-media', 'raw']);
+	const filtered = await searchStorageConnections.call(fakeContext([{ statusCode: 200, body }]), 'r2');
+	assert.deepEqual(filtered.results.map((r) => r.value), ['raw']);
+});
+
+test('the node offers Storage Connection and Storage File, each with Get Many', () => {
+	const properties = new Rendobar().description.properties;
+	const resource = properties.find((p) => p.name === 'resource');
+	assert.deepEqual(resource.options.map((o) => o.value), ['account', 'file', 'job', 'storageConnection', 'storageFile']);
+	const values = properties.filter((p) => p.name === 'operation').flatMap((p) => p.options.map((o) => o.value));
+	assert.ok(values.includes('getStorageConnections'));
+	assert.ok(values.includes('getStorageFiles'));
+});
