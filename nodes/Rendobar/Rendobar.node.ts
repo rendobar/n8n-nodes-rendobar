@@ -1510,7 +1510,11 @@ export class Rendobar implements INodeType {
 
 				if (operation === 'getStorageFiles') {
 					const storageId = requireIdentifier(node, readLocator(this, 'storageId', i), 'Connection', i);
-					const folder = String(this.getNodeParameter('folder', i, '')).trim();
+					// The API accepts only an empty prefix or one ending in '/', and
+					// rejects a leading one, but a folder typed or pasted as '/raw' or
+					// 'raw' is the readable way to write it.
+					let folder = String(this.getNodeParameter('folder', i, '')).trim().replace(/^\/+/, '');
+					if (folder !== '' && !folder.endsWith('/')) folder += '/';
 					const returnAll = this.getNodeParameter('returnAll', i, false) === true;
 					const limit = returnAll ? Infinity : toWholeNumber(this.getNodeParameter('limit', i, 50), 50, 1);
 					let cursor: string | undefined;

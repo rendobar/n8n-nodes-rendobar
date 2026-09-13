@@ -244,3 +244,17 @@ test('Storage File Get Many with Return All walks every page on the cursor it is
 		],
 	);
 });
+
+test('a Folder without a trailing slash, or with a leading one, is still sent the way the API accepts', async () => {
+	const empty = { data: { folders: [], objects: [], cursor: null } };
+
+	for (const folder of ['raw', '/raw']) {
+		const context = fakeContext([{ statusCode: 200, body: empty }], {
+			params: { operation: 'getStorageFiles', storageId: 'prod-media', folder },
+		});
+
+		await new Rendobar().execute.call(context);
+
+		assert.deepEqual(context.requests[0].qs, { prefix: 'raw/' }, `folder ${JSON.stringify(folder)}`);
+	}
+});
