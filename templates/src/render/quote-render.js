@@ -64,12 +64,16 @@ function buildQuoteRender(row) {
   const text = (file, fontSize, y, start, color) =>
     `drawtext=fontfile=font.ttf:textfile=${file}:expansion=none:fontsize=${fontSize}:fontcolor=${color}` +
     `:borderw=3:bordercolor=black@0.45:x=(w-text_w)/2:y=${y}:alpha='clip((t-${start.toFixed(2)})/0.7,0,1)'`;
+  // drawtext lays every line out left to right unless the text says otherwise, so a trailing
+  // Arabic comma lands on the wrong side. A right-to-left mark at each end pins the direction.
+  const rtl = ['ar', 'fa', 'he', 'ur', 'ps', 'yi'].includes(lang.slice(0, 2));
+  const directed = (s) => (rtl ? `‏${s}‏` : s);
   const texts = lines.map((line, i) => {
-    inputs[`line${i + 1}.txt`] = { content: line };
+    inputs[`line${i + 1}.txt`] = { content: directed(line) };
     return text(`line${i + 1}.txt`, size, top + i * lineHeight, 0.6 + i * 0.45, 'white');
   });
   if (author) {
-    inputs['author.txt'] = { content: author };
+    inputs['author.txt'] = { content: directed(author) };
     const authorY = top + lines.length * lineHeight + Math.round(authorSize * 1.2);
     texts.push(text('author.txt', authorSize, authorY, 0.9 + lines.length * 0.45, 'white@0.85'));
   }

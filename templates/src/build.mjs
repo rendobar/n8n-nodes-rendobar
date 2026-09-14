@@ -113,7 +113,7 @@ const SETUP_KEY = "1. Create a Rendobar account at rendobar.com, make an API key
     SETUP_KEY,
     "2. Make a sheet with the columns quote, author, language, background_url, music_url, font_url, status and video_id.",
     "3. Connect Google Sheets in both Sheets nodes and YouTube in the upload node.",
-    "4. Use a background clip of at least 10 seconds, so nothing loops, and a font that covers your language, such as a Noto font.",
+    "4. Use a background clip of at least 10 seconds, so nothing loops, and a font that covers your language, such as Cairo for Arabic or Noto Sans Thai.",
   ].join("\n");
   const wf = build("quotes", "Turn a sheet of quotes into vertical quote videos in any language with Rendobar", [
     sticky("How it works", main, [-80, -780], 700, 700),

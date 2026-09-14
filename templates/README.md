@@ -103,7 +103,8 @@ marked done.
 Setup: a Rendobar API key (free account at rendobar.com), Google Sheets and
 YouTube credentials, and a sheet with the columns quote, author, language,
 background_url, music_url, font_url, status and video_id. Use a background clip
-of at least 10 seconds and a font that covers the language.
+of at least 10 seconds and a font that covers the language, such as Cairo for
+Arabic.
 
 ### Cut long videos into captioned vertical shorts with OpenAI and Rendobar
 

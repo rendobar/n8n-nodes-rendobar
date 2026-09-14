@@ -32,6 +32,13 @@ test('short quotes balance their lines instead of leaving one word behind', () =
 	]);
 });
 
+test('right-to-left lines carry direction marks so a trailing comma stays on the left', () => {
+	const r = buildQuoteRender({ ...media, language: 'ar', quote: 'من جد وجد، ومن زرع حصد', author: 'مثل عربي' });
+	assert.equal(r.inputs['line1.txt'].content, '‏من جد وجد،‏');
+	assert.equal(r.inputs['author.txt'].content, '‏مثل عربي‏');
+	assert.equal(buildQuoteRender({ ...media, language: 'en', quote: 'Make the days count.' }).inputs['line1.txt'].content, 'Make the days count.');
+});
+
 test('quote text travels as files and never inside the FFmpeg command', () => {
 	const r = buildQuoteRender({ ...media, language: 'en', quote: "It's 100% true: don't quote me.", author: "O'Brien" });
 	assert.ok(!r.command.includes("It's") && !r.command.includes("O'Brien"), 'text leaked into the command');
