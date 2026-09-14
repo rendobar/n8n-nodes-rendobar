@@ -10,7 +10,9 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = process.argv[2] ?? join(HERE, "..");
 mkdirSync(OUT, { recursive: true });
-const moduleSource = (file) => readFileSync(join(HERE, "render", file), "utf8").trim();
+// Normalise line endings: a Windows checkout (core.autocrlf) turns the modules into CRLF, which
+// would embed \r in every Code node and make the JSON differ from a Linux build.
+const moduleSource = (file) => readFileSync(join(HERE, "render", file), "utf8").replace(/\r\n/g, "\n").trim();
 const moduleExports = (file, names) => new Function(`${moduleSource(file)}\nreturn { ${names.join(", ")} };`)();
 
 // Stable ids: regenerating a template does not churn every node id.
@@ -127,7 +129,7 @@ const SETUP_KEY = "1. Create a Rendobar account at rendobar.com, make an API key
     "4. Use a background clip of at least 10 seconds, so nothing loops.",
     "5. Fonts: leave font empty for the language default, type any Google Fonts family such as Tajawal, or put your own .ttf link in font_url with its family name in font_family.",
   ].join("\n");
-  const wf = build("quotes", "Turn a sheet of quotes into vertical quote videos in any language with Rendobar", [
+  const wf = build("quotes", "Create YouTube quote videos in any language from Google Sheets with Rendobar", [
     sticky("How it works", main, [-80, -900], 700, 820),
     sticky("Section: render", "### Wrap, pick a font and render\nThe Code node splits the quote into lines and picks the font for its language. Google Fonts returns the font file, and Rendobar renders while the Wait node parks the execution.", [400, -60], 1100, 260, 7),
     sticky("Section: publish", "### Publish\nGet downloads the video, YouTube receives it as private, and the row is marked done so it never renders twice.", [1520, -60], 660, 260, 7),
