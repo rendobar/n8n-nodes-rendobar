@@ -95,49 +95,71 @@ const SETUP_KEY = "1. Create a Rendobar account at rendobar.com, make an API key
 // 1. Sheet of quotes to quote videos
 // ---------------------------------------------------------------------------
 {
-  const code = withModule("quote-render.js", [
-    "const render = buildQuoteRender($json);",
-    "return { json: { ...$json, render_command: render.command, render_inputs: render.inputs } };",
+  // One item per Google Fonts lookup (bold, regular, default weight), all carrying the render.
+  const buildCode = withModule("quote-render.js", [
+    "const row = $input.first().json;",
+    "const font = chooseQuoteFont(row);",
+    "const render = buildQuoteRender(row, font);",
+    "return font.lookups.map((font_css_url) => ({ json: { ...row, font, font_css_url, render_command: render.command, render_inputs: render.inputs } }));",
   ]);
+  const attachCode = withModule("quote-font-file.js", [
+    "const job = $('Build the quote render').first().json;",
+    "const url = pickQuoteFontFile(job.font, $input.all().map((item) => item.json.data));",
+    "return [{ json: { ...job, render_inputs: { ...job.render_inputs, 'fonts/font.ttf': url } } }];",
+  ]);
+  const quoteRow = (field) => `$('Attach the font file').first().json.${field}`;
   const main = [
     "## How it works",
     "",
-    "Add a row to a Google Sheet with a quote, its author, a language code and links to a background clip, a music track and a font. Each new row becomes a 10 second vertical quote video on YouTube.",
+    "Add a row to a Google Sheet with a quote, its author and a language code, plus links to a background clip and a music track. Each new row becomes a 10 second vertical quote video on YouTube.",
     "",
-    "A Code node wraps the quote into balanced lines with Intl.Segmenter, so Thai, Japanese and Chinese break on real word boundaries. The lines travel to Rendobar as a subtitle file drawn with full text shaping, so Arabic letters join, punctuation stays on the correct side and apostrophes never break the FFmpeg command. Rendobar renders a slow push-in on the background, lines that fade in one after another, and a music bed.",
+    "Every language gets a font picked and checked for it, from Montserrat for English to Cairo for Arabic, Kanit for Thai and Noto Sans JP for Japanese, 28 languages in all. Text is sized to how wide that font really is.",
     "",
-    "The job carries the Wait node's resume URL as its callback, so the execution parks for free while FFmpeg works. When the video is ready the workflow downloads it, uploads it to YouTube as private and marks the row done. Rows run one at a time.",
+    "A Code node wraps the quote into balanced lines, so Thai, Japanese and Chinese break on real word boundaries. The lines reach Rendobar as a subtitle file with full text shaping, so Arabic letters join and punctuation stays on the correct side. Rendobar renders a slow push-in, lines that fade in one after another, and a music bed.",
+    "",
+    "The Wait node parks the execution for free while FFmpeg works. The finished video goes to YouTube as private and the row is marked done.",
     "",
     "## Setup steps",
     "",
     SETUP_KEY,
-    "2. Make a sheet with the columns quote, author, language, background_url, music_url, font_url, font_family, status and video_id.",
+    "2. Make a sheet with the columns quote, author, language, background_url, music_url, font, font_url, font_family, status and video_id. Only quote, background_url and music_url need a value.",
     "3. Connect Google Sheets in both Sheets nodes and YouTube in the upload node.",
-    "4. Use a background clip of at least 10 seconds, so nothing loops. Put a font that covers your language in font_url and its family name in font_family, for example Cairo for Arabic.",
+    "4. Use a background clip of at least 10 seconds, so nothing loops.",
+    "5. Fonts: leave font empty for the language default, type any Google Fonts family such as Tajawal, or put your own .ttf link in font_url with its family name in font_family.",
   ].join("\n");
   const wf = build("quotes", "Turn a sheet of quotes into vertical quote videos in any language with Rendobar", [
-    sticky("How it works", main, [-80, -780], 700, 700),
-    sticky("Section: render", "### Wrap and render\nThe Code node splits the quote into lines and builds the FFmpeg command. Rendobar renders while the Wait node parks the execution.", [400, -60], 660, 260, 7),
-    sticky("Section: publish", "### Publish\nGet downloads the video, YouTube receives it as private, and the row is marked done so it never renders twice.", [1080, -60], 660, 260, 7),
+    sticky("How it works", main, [-80, -900], 700, 820),
+    sticky("Section: render", "### Wrap, pick a font and render\nThe Code node splits the quote into lines and picks the font for its language. Google Fonts returns the font file, and Rendobar renders while the Wait node parks the execution.", [400, -60], 1100, 260, 7),
+    sticky("Section: publish", "### Publish\nGet downloads the video, YouTube receives it as private, and the row is marked done so it never renders twice.", [1520, -60], 660, 260, 7),
     {
       name: "Watch for new quotes", type: "n8n-nodes-base.googleSheetsTrigger", typeVersion: 1, position: row(0),
       parameters: { pollTimes: { item: [{ mode: "everyMinute" }] }, documentId: { __rl: true, mode: "list", value: "" }, sheetName: { __rl: true, mode: "list", value: "" }, event: "rowAdded", options: {} },
     },
     loopNode("Loop over rows", row(220)),
-    codeNode("Build the quote render", row(440), code),
-    createJob("Render the quote video", row(660), "ffmpeg", "={{ JSON.stringify($json.render_inputs) }}", "={{ $json.render_command }}"),
-    waitFor("Wait for the render", row(880)),
-    getJob("Download the video", row(1100), true),
-    youtubeUpload("Upload to YouTube", row(1320), "={{ $('Build the quote render').item.json.quote.slice(0, 95) }}", "={{ $('Build the quote render').item.json.quote }} ({{ $('Build the quote render').item.json.author }})"),
+    codeNode("Build the quote render", row(440), buildCode, "runOnceForAllItems"),
     {
-      name: "Mark the row done", type: "n8n-nodes-base.googleSheets", typeVersion: 4.5, position: row(1540),
+      name: "Find the font file", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: row(660),
+      parameters: {
+        url: "={{ $json.font_css_url }}",
+        sendHeaders: true,
+        headerParameters: { parameters: [{ name: "User-Agent", value: "Wget/1.21" }] },
+        options: { response: { response: { neverError: true, responseFormat: "text" } } },
+      },
+    },
+    codeNode("Attach the font file", row(880), attachCode, "runOnceForAllItems"),
+    createJob("Render the quote video", row(1100), "ffmpeg", "={{ JSON.stringify($json.render_inputs) }}", "={{ $json.render_command }}"),
+    waitFor("Wait for the render", row(1320)),
+    getJob("Download the video", row(1540), true),
+    youtubeUpload("Upload to YouTube", row(1760), `={{ ${quoteRow("quote")}.slice(0, 95) }}`, `={{ ${quoteRow("quote")} }} ({{ ${quoteRow("author")} }})`),
+    {
+      name: "Mark the row done", type: "n8n-nodes-base.googleSheets", typeVersion: 4.5, position: row(1980),
       parameters: {
         operation: "update",
         documentId: { __rl: true, mode: "list", value: "" },
         sheetName: { __rl: true, mode: "list", value: "" },
         columns: {
           mappingMode: "defineBelow",
-          value: { row_number: "={{ $('Build the quote render').item.json.row_number }}", status: "done", video_id: "={{ $json.id }}" },
+          value: { row_number: `={{ ${quoteRow("row_number")} }}`, status: "done", video_id: "={{ $json.id }}" },
           matchingColumns: ["row_number"],
           schema: ["row_number", "status", "video_id"].map((id) => ({ id, displayName: id, required: false, defaultMatch: false, display: true, type: id === "row_number" ? "number" : "string", canBeUsedToMatch: true, ...(id === "row_number" ? { readOnly: true } : {}) })),
         },
@@ -147,7 +169,9 @@ const SETUP_KEY = "1. Create a Rendobar account at rendobar.com, make an API key
   ], [
     ["Watch for new quotes", "Loop over rows"],
     ["Loop over rows", "Build the quote render", 1],
-    ["Build the quote render", "Render the quote video"],
+    ["Build the quote render", "Find the font file"],
+    ["Find the font file", "Attach the font file"],
+    ["Attach the font file", "Render the quote video"],
     ["Render the quote video", "Wait for the render"],
     ["Wait for the render", "Download the video"],
     ["Download the video", "Upload to YouTube"],

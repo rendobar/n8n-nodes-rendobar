@@ -8,11 +8,11 @@
       "typeVersion": 1,
       "position": [
         -80,
-        -780
+        -900
       ],
       "parameters": {
-        "content": "## How it works\n\nAdd a row to a Google Sheet with a quote, its author, a language code and links to a background clip, a music track and a font. Each new row becomes a 10 second vertical quote video on YouTube.\n\nA Code node wraps the quote into balanced lines with Intl.Segmenter, so Thai, Japanese and Chinese break on real word boundaries. The lines travel to Rendobar as a subtitle file drawn with full text shaping, so Arabic letters join, punctuation stays on the correct side and apostrophes never break the FFmpeg command. Rendobar renders a slow push-in on the background, lines that fade in one after another, and a music bed.\n\nThe job carries the Wait node's resume URL as its callback, so the execution parks for free while FFmpeg works. When the video is ready the workflow downloads it, uploads it to YouTube as private and marks the row done. Rows run one at a time.\n\n## Setup steps\n\n1. Create a Rendobar account at rendobar.com, make an API key under Settings, and add it as a Rendobar API credential on every Rendobar node.\n2. Make a sheet with the columns quote, author, language, background_url, music_url, font_url, font_family, status and video_id.\n3. Connect Google Sheets in both Sheets nodes and YouTube in the upload node.\n4. Use a background clip of at least 10 seconds, so nothing loops. Put a font that covers your language in font_url and its family name in font_family, for example Cairo for Arabic.",
-        "height": 700,
+        "content": "## How it works\n\nAdd a row to a Google Sheet with a quote, its author and a language code, plus links to a background clip and a music track. Each new row becomes a 10 second vertical quote video on YouTube.\n\nEvery language gets a font picked and checked for it, from Montserrat for English to Cairo for Arabic, Kanit for Thai and Noto Sans JP for Japanese, 28 languages in all. Text is sized to how wide that font really is.\n\nA Code node wraps the quote into balanced lines, so Thai, Japanese and Chinese break on real word boundaries. The lines reach Rendobar as a subtitle file with full text shaping, so Arabic letters join and punctuation stays on the correct side. Rendobar renders a slow push-in, lines that fade in one after another, and a music bed.\n\nThe Wait node parks the execution for free while FFmpeg works. The finished video goes to YouTube as private and the row is marked done.\n\n## Setup steps\n\n1. Create a Rendobar account at rendobar.com, make an API key under Settings, and add it as a Rendobar API credential on every Rendobar node.\n2. Make a sheet with the columns quote, author, language, background_url, music_url, font, font_url, font_family, status and video_id. Only quote, background_url and music_url need a value.\n3. Connect Google Sheets in both Sheets nodes and YouTube in the upload node.\n4. Use a background clip of at least 10 seconds, so nothing loops.\n5. Fonts: leave font empty for the language default, type any Google Fonts family such as Tajawal, or put your own .ttf link in font_url with its family name in font_family.",
+        "height": 820,
         "width": 700
       }
     },
@@ -26,9 +26,9 @@
         -60
       ],
       "parameters": {
-        "content": "### Wrap and render\nThe Code node splits the quote into lines and builds the FFmpeg command. Rendobar renders while the Wait node parks the execution.",
+        "content": "### Wrap, pick a font and render\nThe Code node splits the quote into lines and picks the font for its language. Google Fonts returns the font file, and Rendobar renders while the Wait node parks the execution.",
         "height": 260,
-        "width": 660,
+        "width": 1100,
         "color": 7
       }
     },
@@ -38,7 +38,7 @@
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
-        1080,
+        1520,
         -60
       ],
       "parameters": {
@@ -102,8 +102,52 @@
         40
       ],
       "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "// Code node body for \"Sheet of quotes to quote videos\". The n8n template embeds\n// this function verbatim and the local test runner evaluates the same file, so the\n// command n8n builds is the command that was rendered and checked.\n// Input: one sheet row. Output: the Rendobar ffmpeg job's command and inputs.\nfunction buildQuoteRender(row) {\n  const DURATION = 10;\n  const W = 1080;\n  const H = 1920;\n  const quote = String(row.quote ?? '').trim().replace(/\\s+/g, ' ');\n  const author = String(row.author ?? '').trim();\n  const lang = String(row.language ?? 'en').trim() || 'en';\n  const family = String(row.font_family ?? '').trim();\n  if (!quote) throw new Error('This row has no quote text');\n  for (const key of ['background_url', 'music_url', 'font_url']) {\n    if (!/^https:\\/\\//.test(String(row[key] ?? ''))) throw new Error(`Column ${key} must be an https URL`);\n  }\n  if (!family) throw new Error('Column font_family must name the font in font_url, for example Cairo or Noto Sans Thai');\n\n  // Wrap into balanced lines. Whole phrases (text between spaces) stay together\n  // where they fit, so a Thai clause is never split from its connector. A phrase\n  // too long for one line falls back to Intl.Segmenter word boundaries, which\n  // work for Thai, Japanese and Chinese. Widths count graphemes, so Thai vowel\n  // and tone marks do not count as extra characters.\n  const graphemes = (s) => [...new Intl.Segmenter(lang, { granularity: 'grapheme' }).segment(s)].length;\n  const maxPerLine = { th: 22, ja: 12, zh: 12, ko: 14, ar: 20, he: 20 }[lang.slice(0, 2)] ?? 22;\n  const units = [];\n  for (const phrase of quote.split(' ')) {\n    if (graphemes(phrase) <= maxPerLine) {\n      units.push({ text: phrase, space: true });\n      continue;\n    }\n    let first = true;\n    for (const { segment } of new Intl.Segmenter(lang, { granularity: 'word' }).segment(phrase)) {\n      units.push({ text: segment, space: first });\n      first = false;\n    }\n  }\n  const lineCount = Math.ceil(graphemes(quote) / maxPerLine);\n  const target = Math.min(maxPerLine, (graphemes(quote) / lineCount) * 1.15);\n  const lines = [];\n  let current = '';\n  for (const unit of units) {\n    const joined = current ? current + (unit.space ? ' ' : '') + unit.text : unit.text;\n    const punctuationOnly = /^[\\p{P}]+$/u.test(unit.text);\n    if (current && !punctuationOnly && graphemes(joined) > target) {\n      lines.push(current);\n      current = unit.text;\n    } else {\n      current = joined;\n    }\n  }\n  if (current) lines.push(current);\n\n  // Size to the longest line: about half an em per Latin grapheme, a full em for CJK.\n  const widthPerGrapheme = { ja: 1, zh: 1, ko: 0.95, th: 0.55, ar: 0.45, he: 0.5 }[lang.slice(0, 2)] ?? 0.5;\n  const longest = Math.max(...lines.map(graphemes));\n  const size = Math.max(48, Math.min(96, Math.floor(920 / (longest * widthPerGrapheme))));\n  const lineHeight = Math.round(size * 1.45);\n  const authorSize = Math.max(34, Math.round(size * 0.55));\n  const blockHeight = lines.length * lineHeight + (author ? Math.round(authorSize * 2) : 0);\n  const top = Math.round((H - blockHeight) / 2);\n\n  // The text is drawn by libass from a subtitle file, with harfbuzz shaping. FFmpeg's\n  // drawtext swaps Arabic letters for legacy presentation forms that modern fonts such\n  // as Cairo leave out, and draws empty boxes for them. libass still lays a line out\n  // left to right unless the text says otherwise, so right-to-left lines carry a\n  // right-to-left mark at each end to keep trailing punctuation on the correct side.\n  const rtl = ['ar', 'fa', 'he', 'ur', 'ps', 'yi'].includes(lang.slice(0, 2));\n  const directed = (s) => (rtl ? `‏${s}‏` : s);\n  // In a subtitle file braces open override blocks and a backslash starts a tag.\n  const escape = (s) => s.replace(/\\\\/g, '⧵').replace(/[{}]/g, (c) => `\\\\${c}`);\n  const stamp = (s) => {\n    const cs = Math.round(s * 100);\n    const pad = (v) => String(v).padStart(2, '0');\n    return `${Math.floor(cs / 360000)}:${pad(Math.floor(cs / 6000) % 60)}:${pad(Math.floor(cs / 100) % 60)}.${pad(cs % 100)}`;\n  };\n  const style = (name, px, alpha, outline) =>\n    `Style: ${name},${family},${px},&H${alpha}FFFFFF,&H${alpha}FFFFFF,&H73000000,&H00000000,0,0,0,0,100,100,0,0,1,${outline},0,5,60,60,0,1`;\n  const event = (styleName, start, y, text) =>\n    `Dialogue: 0,${stamp(start)},${stamp(DURATION)},${styleName},,0,0,0,,{\\\\pos(${W / 2},${y})\\\\fad(700,0)}${directed(escape(text))}`;\n  const events = lines.map((line, i) => event('Quote', 0.6 + i * 0.45, top + i * lineHeight + Math.round(lineHeight / 2), line));\n  if (author) {\n    events.push(event('Author', 0.9 + lines.length * 0.45, top + lines.length * lineHeight + Math.round(authorSize * 1.1), author));\n  }\n  const subtitles = [\n    '[Script Info]', 'ScriptType: v4.00+', `PlayResX: ${W}`, `PlayResY: ${H}`, 'WrapStyle: 2', 'ScaledBorderAndShadow: yes', '',\n    '[V4+ Styles]',\n    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',\n    style('Quote', Math.round(size * 1.2), '00', 3),\n    style('Author', Math.round(authorSize * 1.2), '26', 2),\n    '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',\n    ...events,\n  ].join('\\n') + '\\n';\n\n  // The font sits in its own folder, so libass never tries to read the background video as a font.\n  const inputs = { background: row.background_url, music: row.music_url, 'fonts/font.ttf': row.font_url, 'quote.ass': { content: subtitles } };\n\n  // Slow push-in: the background grows 6% over the clip, re-evaluated per frame.\n  const zoom = '(1+0.006*t)';\n  const graph = [\n    `[0:v]scale=w='trunc(${W}*${zoom}/2)*2':h='trunc(${H}*${zoom}/2)*2':force_original_aspect_ratio=increase:force_divisible_by=2:eval=frame,crop=${W}:${H},setsar=1,fps=30,eq=brightness=-0.05[bg]`,\n    `color=c=black@0.3:s=${W}x${H}:r=30:d=${DURATION}[shade]`,\n    `[bg][shade]overlay=shortest=1,ass=quote.ass:fontsdir=fonts:shaping=complex,fade=t=out:st=${DURATION - 0.7}:d=0.7[v]`,\n    `[1:a]atrim=0:${DURATION},asetpts=PTS-STARTPTS,afade=t=in:d=1,afade=t=out:st=${DURATION - 1.5}:d=1.5[a]`,\n  ].join(';');\n\n  const command =\n    `-i background -i music -filter_complex \"${graph}\" -map \"[v]\" -map \"[a]\" -t ${DURATION} -r 30 ` +\n    `-c:v libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart quote.mp4`;\n  return { command, inputs, lines };\n}\n\nconst render = buildQuoteRender($json);\nreturn { json: { ...$json, render_command: render.command, render_inputs: render.inputs } };"
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Code node bodies for \"Sheet of quotes to quote videos\". The n8n template embeds\n// this file verbatim and the local test runner evaluates the same file, so the\n// command n8n builds is the command that was rendered and checked.\n\n// The default font for each language: the Google Fonts family, the family name\n// inside its bold file (libass matches that name, and a few files differ from the\n// Google name), and how many ems one grapheme takes on screen. The widths were\n// measured from real renders of each font, so text is sized to the font instead\n// of guessed per language. Every entry passed the same checks: it covers its\n// script plus Latin letters and digits, has a true bold, and libass selected the\n// file itself rather than falling back to another font.\nconst QUOTE_FONTS = {\n  latin: ['Montserrat', 'Montserrat', 0.41],\n  vi: ['Be Vietnam Pro', 'Be Vietnam Pro', 0.41],\n  cyrillic: ['Montserrat', 'Montserrat', 0.49],\n  el: ['Commissioner', 'Commissioner', 0.36],\n  ar: ['Cairo', 'Cairo', 0.32],\n  fa: ['Vazirmatn', 'Vazirmatn', 0.32],\n  ur: ['Noto Nastaliq Urdu', 'Noto Nastaliq Urdu', 0.19],\n  he: ['Heebo', 'Heebo', 0.36],\n  hi: ['Noto Sans Devanagari', 'Noto Sans Devanagari', 0.35],\n  bn: ['Hind Siliguri', 'Hind Siliguri', 0.46],\n  ta: ['Noto Sans Tamil', 'Noto Sans Tamil', 1.2],\n  te: ['Noto Sans Telugu', 'Noto Sans Telugu', 0.75],\n  kn: ['Noto Sans Kannada', 'Noto Sans Kannada', 0.48],\n  ml: ['Manjari', 'Manjari', 0.73],\n  gu: ['Noto Sans Gujarati', 'Noto Sans Gujarati', 0.46],\n  pa: ['Noto Sans Gurmukhi', 'Noto Sans Gurmukhi', 0.54],\n  si: ['Abhaya Libre', 'Abhaya Libre', 0.55],\n  th: ['Kanit', 'Kanit', 0.45],\n  lo: ['Noto Sans Lao Looped', 'Noto Sans Lao Looped', 0.38],\n  km: ['Kantumruy Pro', 'Kantumruy Pro', 0.71],\n  my: ['Noto Sans Myanmar', 'Noto Sans Myanmar', 0.41],\n  am: ['Menbere', 'Menbere', 0.49],\n  ka: ['Noto Sans Georgian', 'Noto Sans Georgian', 0.55],\n  hy: ['Noto Sans Armenian', 'Noto Sans Armenian', 0.48],\n  'zh-Hans': ['Noto Sans SC', 'Noto Sans SC', 0.77],\n  'zh-Hant': ['Noto Sans TC', 'Noto Sans TC', 0.79],\n  ja: ['Noto Sans JP', 'Noto Sans JP', 0.82],\n  ko: ['Noto Sans KR', 'Noto Sans KR', 0.57],\n};\n// Languages that share a default with another code. Anything not listed and not a\n// key above uses the Latin default, so a language in another script needs the font column.\nconst QUOTE_FONT_ALIASES = { mr: 'hi', ne: 'hi', ti: 'am', ru: 'cyrillic', uk: 'cyrillic', be: 'cyrillic', bg: 'cyrillic', mk: 'cyrillic', kk: 'cyrillic', ky: 'cyrillic', mn: 'cyrillic' };\n\n// Pick the font for a row. The font column takes any Google Fonts family; font_url\n// takes your own font file instead, with font_family naming the font inside it.\n// Returns the Google Fonts lookups to try, bold first, since not every family has a bold.\nfunction chooseQuoteFont(row) {\n  const tag = String(row.language ?? 'en').trim().toLowerCase() || 'en';\n  const [base, region = ''] = tag.split(/[-_]/);\n  const key = base === 'zh' ? (/^(tw|hk|mo|hant)$/.test(region) ? 'zh-Hant' : 'zh-Hans') : (QUOTE_FONT_ALIASES[base] ?? base);\n  const [defaultFamily, defaultName, widthPerGrapheme] = QUOTE_FONTS[key] ?? QUOTE_FONTS.latin;\n  const custom = String(row.font ?? '').trim();\n  const ownFile = String(row.font_url ?? '').trim();\n  const nameInFile = String(row.font_family ?? '').trim();\n  if (ownFile && !/^https:\\/\\//.test(ownFile)) throw new Error('Column font_url must be an https URL');\n  if (ownFile && !nameInFile) throw new Error('Column font_family must name the font in font_url, for example Cairo');\n  const family = custom || defaultFamily;\n  const lookup = (weight) => `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, '+')}${weight ? `:wght@${weight}` : ''}`;\n  return {\n    family,\n    name: nameInFile || (custom ? custom : defaultName),\n    widthPerGrapheme,\n    fileUrl: ownFile || null,\n    lookups: [lookup(700), lookup(400), lookup(null)],\n  };\n}\n\n// Input: one sheet row and its chosen font. Output: the Rendobar ffmpeg job's command and inputs.\n// The font file input stays empty until the Google Fonts lookup fills it (quote-font-file.js).\nfunction buildQuoteRender(row, font) {\n  const DURATION = 10;\n  const W = 1080;\n  const H = 1920;\n  const quote = String(row.quote ?? '').trim().replace(/\\s+/g, ' ');\n  const author = String(row.author ?? '').trim();\n  const lang = String(row.language ?? 'en').trim() || 'en';\n  const base = lang.slice(0, 2).toLowerCase();\n  if (!quote) throw new Error('This row has no quote text');\n  for (const key of ['background_url', 'music_url']) {\n    if (!/^https:\\/\\//.test(String(row[key] ?? ''))) throw new Error(`Column ${key} must be an https URL`);\n  }\n\n  // Wrap into balanced lines. Whole phrases (text between spaces) stay together\n  // where they fit, so a Thai clause is never split from its connector. A phrase\n  // too long for one line falls back to Intl.Segmenter word boundaries, which\n  // work for Thai, Japanese and Chinese. Widths count graphemes, so Thai vowel\n  // and tone marks do not count as extra characters. Wide scripts get fewer\n  // graphemes per line, so a Tamil or Malayalam line never runs off the frame.\n  const graphemes = (s) => [...new Intl.Segmenter(lang, { granularity: 'grapheme' }).segment(s)].length;\n  const wpg = font.widthPerGrapheme;\n  const preferred = { th: 22, ja: 12, zh: 12, ko: 14, ar: 20, he: 20 }[base] ?? 22;\n  const maxPerLine = Math.max(6, Math.min(preferred, Math.floor(920 / (wpg * 60))));\n  const units = [];\n  for (const phrase of quote.split(' ')) {\n    if (graphemes(phrase) <= maxPerLine) {\n      units.push({ text: phrase, space: true });\n      continue;\n    }\n    let first = true;\n    for (const { segment } of new Intl.Segmenter(lang, { granularity: 'word' }).segment(phrase)) {\n      units.push({ text: segment, space: first });\n      first = false;\n    }\n  }\n  const lineCount = Math.ceil(graphemes(quote) / maxPerLine);\n  const target = Math.min(maxPerLine, (graphemes(quote) / lineCount) * 1.15);\n  const lines = [];\n  let current = '';\n  for (const unit of units) {\n    const joined = current ? current + (unit.space ? ' ' : '') + unit.text : unit.text;\n    const punctuationOnly = /^[\\p{P}]+$/u.test(unit.text);\n    if (current && !punctuationOnly && graphemes(joined) > target) {\n      lines.push(current);\n      current = unit.text;\n    } else {\n      current = joined;\n    }\n  }\n  if (current) lines.push(current);\n\n  // Size the longest line to about 920 px, using the font's measured width per grapheme.\n  const longest = Math.max(...lines.map(graphemes));\n  const size = Math.max(40, Math.min(96, Math.floor(920 / (longest * wpg))));\n  // Nastaliq stacks letters diagonally and needs more room between lines.\n  const lineHeight = Math.round(size * (base === 'ur' ? 1.9 : 1.45));\n  const authorSize = Math.max(34, Math.round(size * 0.55));\n  const blockHeight = lines.length * lineHeight + (author ? Math.round(authorSize * 2) : 0);\n  const top = Math.round((H - blockHeight) / 2);\n\n  // The text is drawn by libass from a subtitle file, with harfbuzz shaping. FFmpeg's\n  // drawtext swaps Arabic letters for legacy presentation forms that modern fonts such\n  // as Cairo leave out, and draws empty boxes for them. libass still lays a line out\n  // left to right unless the text says otherwise, so right-to-left lines carry a\n  // right-to-left mark at each end to keep trailing punctuation on the correct side.\n  const rtl = ['ar', 'fa', 'he', 'ur', 'ps', 'yi'].includes(base);\n  const directed = (s) => (rtl ? `‏${s}‏` : s);\n  // In a subtitle file braces open override blocks and a backslash starts a tag.\n  const escape = (s) => s.replace(/\\\\/g, '⧵').replace(/[{}]/g, (c) => `\\\\${c}`);\n  const stamp = (s) => {\n    const cs = Math.round(s * 100);\n    const pad = (v) => String(v).padStart(2, '0');\n    return `${Math.floor(cs / 360000)}:${pad(Math.floor(cs / 6000) % 60)}:${pad(Math.floor(cs / 100) % 60)}.${pad(cs % 100)}`;\n  };\n  const style = (name, px, alpha, outline) =>\n    `Style: ${name},${font.name},${px},&H${alpha}FFFFFF,&H${alpha}FFFFFF,&H73000000,&H00000000,0,0,0,0,100,100,0,0,1,${outline},0,5,60,60,0,1`;\n  const event = (styleName, start, y, text) =>\n    `Dialogue: 0,${stamp(start)},${stamp(DURATION)},${styleName},,0,0,0,,{\\\\pos(${W / 2},${y})\\\\fad(700,0)}${directed(escape(text))}`;\n  const events = lines.map((line, i) => event('Quote', 0.6 + i * 0.45, top + i * lineHeight + Math.round(lineHeight / 2), line));\n  if (author) {\n    events.push(event('Author', 0.9 + lines.length * 0.45, top + lines.length * lineHeight + Math.round(authorSize * 1.1), author));\n  }\n  const subtitles = [\n    '[Script Info]', 'ScriptType: v4.00+', `PlayResX: ${W}`, `PlayResY: ${H}`, 'WrapStyle: 2', 'ScaledBorderAndShadow: yes', '',\n    '[V4+ Styles]',\n    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',\n    style('Quote', Math.round(size * 1.2), '00', 3),\n    style('Author', Math.round(authorSize * 1.2), '26', 2),\n    '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',\n    ...events,\n  ].join('\\n') + '\\n';\n\n  // The font sits in its own folder, so libass never tries to read the background video as a font.\n  const inputs = { background: row.background_url, music: row.music_url, 'fonts/font.ttf': font.fileUrl, 'quote.ass': { content: subtitles } };\n\n  // Slow push-in: the background grows 6% over the clip, re-evaluated per frame.\n  const zoom = '(1+0.006*t)';\n  const graph = [\n    `[0:v]scale=w='trunc(${W}*${zoom}/2)*2':h='trunc(${H}*${zoom}/2)*2':force_original_aspect_ratio=increase:force_divisible_by=2:eval=frame,crop=${W}:${H},setsar=1,fps=30,eq=brightness=-0.05[bg]`,\n    `color=c=black@0.3:s=${W}x${H}:r=30:d=${DURATION}[shade]`,\n    `[bg][shade]overlay=shortest=1,ass=quote.ass:fontsdir=fonts:shaping=complex,fade=t=out:st=${DURATION - 0.7}:d=0.7[v]`,\n    `[1:a]atrim=0:${DURATION},asetpts=PTS-STARTPTS,afade=t=in:d=1,afade=t=out:st=${DURATION - 1.5}:d=1.5[a]`,\n  ].join(';');\n\n  const command =\n    `-i background -i music -filter_complex \"${graph}\" -map \"[v]\" -map \"[a]\" -t ${DURATION} -r 30 ` +\n    `-c:v libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart quote.mp4`;\n  return { command, inputs, lines };\n}\n\nconst row = $input.first().json;\nconst font = chooseQuoteFont(row);\nconst render = buildQuoteRender(row, font);\nreturn font.lookups.map((font_css_url) => ({ json: { ...row, font, font_css_url, render_command: render.command, render_inputs: render.inputs } }));"
+      }
+    },
+    {
+      "id": "2cf3e9ba-5d8f-510a-a62f-ed5051649846",
+      "name": "Find the font file",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        40
+      ],
+      "parameters": {
+        "url": "={{ $json.font_css_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Wget/1.21"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "95016842-2dc7-5324-a245-23872854fd07",
+      "name": "Attach the font file",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        40
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Code node body that attaches the font file to the quote render. It runs after the\n// Google Fonts lookups, which were tried bold first because not every family has a bold.\n// Each response is the CSS text of one lookup, or an error page when that weight does not exist.\nfunction pickQuoteFontFile(font, responses) {\n  if (font.fileUrl) return font.fileUrl;\n  for (const css of responses) {\n    const match = /url\\((https:\\/\\/fonts\\.gstatic\\.com\\/[^)]+\\.ttf)\\)/.exec(String(css ?? ''));\n    if (match) return match[1];\n  }\n  throw new Error(`Google Fonts has no family named \"${font.family}\". Check the spelling in the font column, or put your own font file in font_url.`);\n}\n\nconst job = $('Build the quote render').first().json;\nconst url = pickQuoteFontFile(job.font, $input.all().map((item) => item.json.data));\nreturn [{ json: { ...job, render_inputs: { ...job.render_inputs, 'fonts/font.ttf': url } } }];"
       }
     },
     {
@@ -112,7 +156,7 @@
       "type": "@rendobar/n8n-nodes-rendobar.rendobar",
       "typeVersion": 1,
       "position": [
-        660,
+        1100,
         40
       ],
       "parameters": {
@@ -144,7 +188,7 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        880,
+        1320,
         40
       ],
       "parameters": {
@@ -164,7 +208,7 @@
       "type": "@rendobar/n8n-nodes-rendobar.rendobar",
       "typeVersion": 1,
       "position": [
-        1100,
+        1540,
         40
       ],
       "parameters": {
@@ -186,19 +230,19 @@
       "type": "n8n-nodes-base.youTube",
       "typeVersion": 1,
       "position": [
-        1320,
+        1760,
         40
       ],
       "parameters": {
         "resource": "video",
         "operation": "upload",
-        "title": "={{ $('Build the quote render').item.json.quote.slice(0, 95) }}",
+        "title": "={{ $('Attach the font file').first().json.quote.slice(0, 95) }}",
         "regionCode": "US",
         "categoryId": "22",
         "binaryProperty": "data",
         "options": {
           "privacyStatus": "private",
-          "description": "={{ $('Build the quote render').item.json.quote }} ({{ $('Build the quote render').item.json.author }})"
+          "description": "={{ $('Attach the font file').first().json.quote }} ({{ $('Attach the font file').first().json.author }})"
         }
       }
     },
@@ -208,7 +252,7 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        1540,
+        1980,
         40
       ],
       "parameters": {
@@ -226,7 +270,7 @@
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
-            "row_number": "={{ $('Build the quote render').item.json.row_number }}",
+            "row_number": "={{ $('Attach the font file').first().json.row_number }}",
             "status": "done",
             "video_id": "={{ $json.id }}"
           },
@@ -293,6 +337,28 @@
       ]
     },
     "Build the quote render": {
+      "main": [
+        [
+          {
+            "node": "Find the font file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find the font file": {
+      "main": [
+        [
+          {
+            "node": "Attach the font file",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach the font file": {
       "main": [
         [
           {

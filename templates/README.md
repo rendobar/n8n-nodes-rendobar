@@ -93,9 +93,13 @@ Thai or Arabic.
 
 How it works: a Google Sheets trigger fires on each new row and a loop takes the
 rows one at a time. A Code node wraps the quote into balanced lines with
-`Intl.Segmenter` and builds one FFmpeg command. The lines travel as a subtitle
-file drawn with full text shaping, so Arabic letters join and punctuation stays
-on the correct side. Create Job renders
+`Intl.Segmenter`, picks the font for the row's language and builds one FFmpeg
+command. Each of the 28 language defaults (Montserrat for English, Cairo for
+Arabic, Kanit for Thai, Noto Sans JP for Japanese and so on) was rendered and
+checked for missing letters, and text is sized to how wide that font really is.
+An HTTP Request node fetches the font file from Google Fonts, bold if the family
+has one. The lines travel as a subtitle file drawn with full text shaping, so
+Arabic letters join and punctuation stays on the correct side. Create Job renders
 a 10 second 1080x1920 video with a slow push-in, lines that fade in one after
 another and a music bed, carrying the Wait node's resume URL as its callback.
 Get Job downloads the video, YouTube receives it as private, and the row is
@@ -103,9 +107,16 @@ marked done.
 
 Setup: a Rendobar API key (free account at rendobar.com), Google Sheets and
 YouTube credentials, and a sheet with the columns quote, author, language,
-background_url, music_url, font_url, font_family, status and video_id. Use a
-background clip of at least 10 seconds, and a font that covers the language with
-its family name in font_family, such as Cairo for Arabic.
+background_url, music_url, font, font_url, font_family, status and video_id.
+Only quote, background_url and music_url need a value. Use a background clip of
+at least 10 seconds.
+
+Fonts: leave font empty for the language default, or type any Google Fonts
+family in it, such as Tajawal or Playfair Display. To use a font that is not on
+Google Fonts, put a link to its .ttf file in font_url and the font's family name
+in font_family. The family name is also the fix if a Google font does not show:
+a few files name themselves differently, for example Nanum Gothic's file says
+NanumGothic.
 
 ### Cut long videos into captioned vertical shorts with OpenAI and Rendobar
 

@@ -1,28 +1,97 @@
-// Code node body for "Sheet of quotes to quote videos". The n8n template embeds
-// this function verbatim and the local test runner evaluates the same file, so the
+// Code node bodies for "Sheet of quotes to quote videos". The n8n template embeds
+// this file verbatim and the local test runner evaluates the same file, so the
 // command n8n builds is the command that was rendered and checked.
-// Input: one sheet row. Output: the Rendobar ffmpeg job's command and inputs.
-function buildQuoteRender(row) {
+
+// The default font for each language: the Google Fonts family, the family name
+// inside its bold file (libass matches that name, and a few files differ from the
+// Google name), and how many ems one grapheme takes on screen. The widths were
+// measured from real renders of each font, so text is sized to the font instead
+// of guessed per language. Every entry passed the same checks: it covers its
+// script plus Latin letters and digits, has a true bold, and libass selected the
+// file itself rather than falling back to another font.
+const QUOTE_FONTS = {
+  latin: ['Montserrat', 'Montserrat', 0.41],
+  vi: ['Be Vietnam Pro', 'Be Vietnam Pro', 0.41],
+  cyrillic: ['Montserrat', 'Montserrat', 0.49],
+  el: ['Commissioner', 'Commissioner', 0.36],
+  ar: ['Cairo', 'Cairo', 0.32],
+  fa: ['Vazirmatn', 'Vazirmatn', 0.32],
+  ur: ['Noto Nastaliq Urdu', 'Noto Nastaliq Urdu', 0.19],
+  he: ['Heebo', 'Heebo', 0.36],
+  hi: ['Noto Sans Devanagari', 'Noto Sans Devanagari', 0.35],
+  bn: ['Hind Siliguri', 'Hind Siliguri', 0.46],
+  ta: ['Noto Sans Tamil', 'Noto Sans Tamil', 1.2],
+  te: ['Noto Sans Telugu', 'Noto Sans Telugu', 0.75],
+  kn: ['Noto Sans Kannada', 'Noto Sans Kannada', 0.48],
+  ml: ['Manjari', 'Manjari', 0.73],
+  gu: ['Noto Sans Gujarati', 'Noto Sans Gujarati', 0.46],
+  pa: ['Noto Sans Gurmukhi', 'Noto Sans Gurmukhi', 0.54],
+  si: ['Abhaya Libre', 'Abhaya Libre', 0.55],
+  th: ['Kanit', 'Kanit', 0.45],
+  lo: ['Noto Sans Lao Looped', 'Noto Sans Lao Looped', 0.38],
+  km: ['Kantumruy Pro', 'Kantumruy Pro', 0.71],
+  my: ['Noto Sans Myanmar', 'Noto Sans Myanmar', 0.41],
+  am: ['Menbere', 'Menbere', 0.49],
+  ka: ['Noto Sans Georgian', 'Noto Sans Georgian', 0.55],
+  hy: ['Noto Sans Armenian', 'Noto Sans Armenian', 0.48],
+  'zh-Hans': ['Noto Sans SC', 'Noto Sans SC', 0.77],
+  'zh-Hant': ['Noto Sans TC', 'Noto Sans TC', 0.79],
+  ja: ['Noto Sans JP', 'Noto Sans JP', 0.82],
+  ko: ['Noto Sans KR', 'Noto Sans KR', 0.57],
+};
+// Languages that share a default with another code. Anything not listed and not a
+// key above uses the Latin default, so a language in another script needs the font column.
+const QUOTE_FONT_ALIASES = { mr: 'hi', ne: 'hi', ti: 'am', ru: 'cyrillic', uk: 'cyrillic', be: 'cyrillic', bg: 'cyrillic', mk: 'cyrillic', kk: 'cyrillic', ky: 'cyrillic', mn: 'cyrillic' };
+
+// Pick the font for a row. The font column takes any Google Fonts family; font_url
+// takes your own font file instead, with font_family naming the font inside it.
+// Returns the Google Fonts lookups to try, bold first, since not every family has a bold.
+function chooseQuoteFont(row) {
+  const tag = String(row.language ?? 'en').trim().toLowerCase() || 'en';
+  const [base, region = ''] = tag.split(/[-_]/);
+  const key = base === 'zh' ? (/^(tw|hk|mo|hant)$/.test(region) ? 'zh-Hant' : 'zh-Hans') : (QUOTE_FONT_ALIASES[base] ?? base);
+  const [defaultFamily, defaultName, widthPerGrapheme] = QUOTE_FONTS[key] ?? QUOTE_FONTS.latin;
+  const custom = String(row.font ?? '').trim();
+  const ownFile = String(row.font_url ?? '').trim();
+  const nameInFile = String(row.font_family ?? '').trim();
+  if (ownFile && !/^https:\/\//.test(ownFile)) throw new Error('Column font_url must be an https URL');
+  if (ownFile && !nameInFile) throw new Error('Column font_family must name the font in font_url, for example Cairo');
+  const family = custom || defaultFamily;
+  const lookup = (weight) => `https://fonts.googleapis.com/css2?family=${encodeURIComponent(family).replace(/%20/g, '+')}${weight ? `:wght@${weight}` : ''}`;
+  return {
+    family,
+    name: nameInFile || (custom ? custom : defaultName),
+    widthPerGrapheme,
+    fileUrl: ownFile || null,
+    lookups: [lookup(700), lookup(400), lookup(null)],
+  };
+}
+
+// Input: one sheet row and its chosen font. Output: the Rendobar ffmpeg job's command and inputs.
+// The font file input stays empty until the Google Fonts lookup fills it (quote-font-file.js).
+function buildQuoteRender(row, font) {
   const DURATION = 10;
   const W = 1080;
   const H = 1920;
   const quote = String(row.quote ?? '').trim().replace(/\s+/g, ' ');
   const author = String(row.author ?? '').trim();
   const lang = String(row.language ?? 'en').trim() || 'en';
-  const family = String(row.font_family ?? '').trim();
+  const base = lang.slice(0, 2).toLowerCase();
   if (!quote) throw new Error('This row has no quote text');
-  for (const key of ['background_url', 'music_url', 'font_url']) {
+  for (const key of ['background_url', 'music_url']) {
     if (!/^https:\/\//.test(String(row[key] ?? ''))) throw new Error(`Column ${key} must be an https URL`);
   }
-  if (!family) throw new Error('Column font_family must name the font in font_url, for example Cairo or Noto Sans Thai');
 
   // Wrap into balanced lines. Whole phrases (text between spaces) stay together
   // where they fit, so a Thai clause is never split from its connector. A phrase
   // too long for one line falls back to Intl.Segmenter word boundaries, which
   // work for Thai, Japanese and Chinese. Widths count graphemes, so Thai vowel
-  // and tone marks do not count as extra characters.
+  // and tone marks do not count as extra characters. Wide scripts get fewer
+  // graphemes per line, so a Tamil or Malayalam line never runs off the frame.
   const graphemes = (s) => [...new Intl.Segmenter(lang, { granularity: 'grapheme' }).segment(s)].length;
-  const maxPerLine = { th: 22, ja: 12, zh: 12, ko: 14, ar: 20, he: 20 }[lang.slice(0, 2)] ?? 22;
+  const wpg = font.widthPerGrapheme;
+  const preferred = { th: 22, ja: 12, zh: 12, ko: 14, ar: 20, he: 20 }[base] ?? 22;
+  const maxPerLine = Math.max(6, Math.min(preferred, Math.floor(920 / (wpg * 60))));
   const units = [];
   for (const phrase of quote.split(' ')) {
     if (graphemes(phrase) <= maxPerLine) {
@@ -51,11 +120,11 @@ function buildQuoteRender(row) {
   }
   if (current) lines.push(current);
 
-  // Size to the longest line: about half an em per Latin grapheme, a full em for CJK.
-  const widthPerGrapheme = { ja: 1, zh: 1, ko: 0.95, th: 0.55, ar: 0.45, he: 0.5 }[lang.slice(0, 2)] ?? 0.5;
+  // Size the longest line to about 920 px, using the font's measured width per grapheme.
   const longest = Math.max(...lines.map(graphemes));
-  const size = Math.max(48, Math.min(96, Math.floor(920 / (longest * widthPerGrapheme))));
-  const lineHeight = Math.round(size * 1.45);
+  const size = Math.max(40, Math.min(96, Math.floor(920 / (longest * wpg))));
+  // Nastaliq stacks letters diagonally and needs more room between lines.
+  const lineHeight = Math.round(size * (base === 'ur' ? 1.9 : 1.45));
   const authorSize = Math.max(34, Math.round(size * 0.55));
   const blockHeight = lines.length * lineHeight + (author ? Math.round(authorSize * 2) : 0);
   const top = Math.round((H - blockHeight) / 2);
@@ -65,7 +134,7 @@ function buildQuoteRender(row) {
   // as Cairo leave out, and draws empty boxes for them. libass still lays a line out
   // left to right unless the text says otherwise, so right-to-left lines carry a
   // right-to-left mark at each end to keep trailing punctuation on the correct side.
-  const rtl = ['ar', 'fa', 'he', 'ur', 'ps', 'yi'].includes(lang.slice(0, 2));
+  const rtl = ['ar', 'fa', 'he', 'ur', 'ps', 'yi'].includes(base);
   const directed = (s) => (rtl ? `‏${s}‏` : s);
   // In a subtitle file braces open override blocks and a backslash starts a tag.
   const escape = (s) => s.replace(/\\/g, '⧵').replace(/[{}]/g, (c) => `\\${c}`);
@@ -75,7 +144,7 @@ function buildQuoteRender(row) {
     return `${Math.floor(cs / 360000)}:${pad(Math.floor(cs / 6000) % 60)}:${pad(Math.floor(cs / 100) % 60)}.${pad(cs % 100)}`;
   };
   const style = (name, px, alpha, outline) =>
-    `Style: ${name},${family},${px},&H${alpha}FFFFFF,&H${alpha}FFFFFF,&H73000000,&H00000000,0,0,0,0,100,100,0,0,1,${outline},0,5,60,60,0,1`;
+    `Style: ${name},${font.name},${px},&H${alpha}FFFFFF,&H${alpha}FFFFFF,&H73000000,&H00000000,0,0,0,0,100,100,0,0,1,${outline},0,5,60,60,0,1`;
   const event = (styleName, start, y, text) =>
     `Dialogue: 0,${stamp(start)},${stamp(DURATION)},${styleName},,0,0,0,,{\\pos(${W / 2},${y})\\fad(700,0)}${directed(escape(text))}`;
   const events = lines.map((line, i) => event('Quote', 0.6 + i * 0.45, top + i * lineHeight + Math.round(lineHeight / 2), line));
@@ -93,7 +162,7 @@ function buildQuoteRender(row) {
   ].join('\n') + '\n';
 
   // The font sits in its own folder, so libass never tries to read the background video as a font.
-  const inputs = { background: row.background_url, music: row.music_url, 'fonts/font.ttf': row.font_url, 'quote.ass': { content: subtitles } };
+  const inputs = { background: row.background_url, music: row.music_url, 'fonts/font.ttf': font.fileUrl, 'quote.ass': { content: subtitles } };
 
   // Slow push-in: the background grows 6% over the clip, re-evaluated per frame.
   const zoom = '(1+0.006*t)';
