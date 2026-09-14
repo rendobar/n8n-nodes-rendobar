@@ -1,0 +1,550 @@
+{
+  "name": "Cut long videos into captioned vertical shorts with OpenAI and Rendobar",
+  "nodes": [
+    {
+      "id": "43e1da73-3c2c-507e-a59c-bb4ce8b4cd14",
+      "name": "How it works",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -800
+      ],
+      "parameters": {
+        "content": "## How it works\n\nDrop a long recording into a Google Drive folder: a podcast, a webinar or an interview. The workflow finds the best moments, cuts each one into a captioned vertical clip and uploads the clips to YouTube as Shorts.\n\nRendobar first pulls a 32 kbps mono track from the upload, small enough for the OpenAI transcription endpoint. Whisper returns word timestamps, and a GPT call picks up to three self-contained moments with a hook title for each.\n\nA Code node snaps every clip to word edges, groups the words into short captions and builds one FFmpeg command per clip. That command crops 9:16 around the speaker, burns the captions, draws the hook at the top and levels the audio to -14 LUFS. Each clip is its own Rendobar job that parks on a Wait node, so a long render costs nothing while it runs.\n\n## Setup steps\n\n1. Create a Rendobar account at rendobar.com, make an API key under Settings, and add it as a Rendobar API credential on every Rendobar node.\n2. Connect Google Drive and pick the folder to watch.\n3. Add an OpenAI credential to both HTTP Request nodes.\n4. Connect YouTube in the upload node.\n5. Keep recordings under about 100 minutes. At 32 kbps that stays inside the 25 MB transcription limit.",
+        "height": 720,
+        "width": 700
+      }
+    },
+    {
+      "id": "3d3bae21-c7b9-541c-a876-4de66b1604b9",
+      "name": "Section: transcribe",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        620,
+        -60
+      ],
+      "parameters": {
+        "content": "### Transcribe\nRendobar pulls a small mono track from the upload. OpenAI returns word and segment timestamps from it.",
+        "height": 260,
+        "width": 880,
+        "color": 7
+      }
+    },
+    {
+      "id": "d864f130-e35f-5170-a92d-56bd1e1f6885",
+      "name": "Section: pick",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1520,
+        -60
+      ],
+      "parameters": {
+        "content": "### Pick the moments\nGPT reads the timed transcript and returns up to three moments, each with a start, an end and a hook title.",
+        "height": 260,
+        "width": 660,
+        "color": 7
+      }
+    },
+    {
+      "id": "e28dd549-d1c1-5308-a39f-38fb2a48f0be",
+      "name": "Section: cut",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        -60
+      ],
+      "parameters": {
+        "content": "### Cut each clip\nOne Rendobar job per clip does the crop, captions, hook and loudness in a single FFmpeg command. The loop waits for each callback, then uploads the Short.",
+        "height": 260,
+        "width": 1100,
+        "color": 7
+      }
+    },
+    {
+      "id": "c5356add-87d5-5aa7-a98c-36df3a3b84d6",
+      "name": "Watch the recordings folder",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        40
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "event": "fileCreated",
+        "options": {}
+      }
+    },
+    {
+      "id": "1ec270c2-1ed9-569d-a524-40c81b3b5c44",
+      "name": "Download the recording",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        220,
+        40
+      ],
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.id }}"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "eaea2c70-3465-5375-a3a5-ed046aa15ee3",
+      "name": "Upload the video to Rendobar",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        440,
+        40
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "binaryProperty": "data"
+      }
+    },
+    {
+      "id": "23dd30d3-c943-5663-a851-cecf1e50488e",
+      "name": "Extract the audio",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        660,
+        40
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "create",
+        "jobType": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ffmpeg"
+        },
+        "inputsMode": "json",
+        "inputs": "={{ JSON.stringify({ source: $json.url }) }}",
+        "paramsMode": "fields",
+        "params": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "command": "-i source -vn -ac 1 -ar 16000 -c:a libmp3lame -b:a 32k audio.mp3"
+          }
+        },
+        "options": {
+          "callbackUrl": "={{ $execution.resumeUrl }}"
+        },
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "97279593-0321-5329-a8e3-e151a578b9c9",
+      "name": "Wait for the audio",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        40
+      ],
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "POST",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 10,
+        "resumeUnit": "hours",
+        "options": {}
+      },
+      "webhookId": "9d812c4e-bba5-5afd-a825-8d96a644b428"
+    },
+    {
+      "id": "d121b69f-aa8f-5825-a6b5-5e9f6f4a636f",
+      "name": "Download the audio",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        40
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "get",
+        "jobId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.body.data.jobId }}"
+        },
+        "downloadOutput": true,
+        "outputBinaryProperty": "data",
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "cb97440e-c163-5d3a-a1d5-33ed119a7d2d",
+      "name": "Transcribe with OpenAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "model",
+              "value": "whisper-1"
+            },
+            {
+              "name": "response_format",
+              "value": "verbose_json"
+            },
+            {
+              "name": "timestamp_granularities[]",
+              "value": "word"
+            },
+            {
+              "name": "timestamp_granularities[]",
+              "value": "segment"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0d78b50c-427e-53a3-a9ac-ee215a9e647c",
+      "name": "Pick the moments",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        40
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4.1-mini', response_format: { type: 'json_schema', json_schema: { name: 'moments', strict: true, schema: { type: 'object', additionalProperties: false, required: ['moments'], properties: { moments: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['start', 'end', 'hook'], properties: { start: { type: 'number' }, end: { type: 'number' }, hook: { type: 'string' } } } } } } } }, messages: [ { role: 'system', content: 'You cut short-form clips from long videos. Pick up to 3 self-contained moments of 20 to 45 seconds that make sense without the rest of the video. Use start and end times from the transcript. Write a hook title of at most 40 characters for each.' }, { role: 'user', content: $json.segments.map(s => '[' + s.start.toFixed(1) + '-' + s.end.toFixed(1) + '] ' + s.text.trim()).join('\\n') } ] }) }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "82a3d6c9-76e9-51cc-aa5b-e9af34b006c4",
+      "name": "Build the clip renders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        40
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Code node bodies for \"Long video to vertical shorts with captions\". Embedded\n// verbatim in the n8n template and evaluated by the local test runner.\n\n// Step 1 job: a small mono 16 kHz track, the size a transcription API wants.\nfunction buildAudioRender() {\n  return { command: '-i source -vn -ac 1 -ar 16000 -c:a libmp3lame -b:a 32k audio.mp3', inputs: {} };\n}\n\n// Group word timestamps (OpenAI Whisper verbose_json with word granularity) into\n// caption chunks of up to three words, breaking at sentence ends and pauses.\nfunction groupWords(words, maxWords = 3, maxChars = 16) {\n  const chunks = [];\n  let current = null;\n  for (const w of words) {\n    const text = String(w.word ?? '').trim();\n    if (!text) continue;\n    if (current && (current.count >= maxWords || `${current.text} ${text}`.length > maxChars || w.start - current.end > 0.6)) {\n      chunks.push(current);\n      current = null;\n    }\n    current = current\n      ? { start: current.start, end: w.end, text: `${current.text} ${text}`, count: current.count + 1 }\n      : { start: w.start, end: w.end, text, count: 1 };\n    if (/[.?!]$/.test(text)) {\n      chunks.push(current);\n      current = null;\n    }\n  }\n  if (current) chunks.push(current);\n  return chunks.map(({ start, end, text }) => ({ start, end, text }));\n}\n\n// One 9:16 clip: crop around the speaker, burn the captions, add the hook title\n// and level the audio for social playback.\nfunction buildShortRender(moment, captions, options) {\n  const W = 1080;\n  const H = 1920;\n  const subjectX = Math.min(1, Math.max(0, Number(moment.subject_x ?? 0.5)));\n  // A caption belongs to the moment its midpoint falls in, so neighbouring clips never share a line.\n  const inside = captions.filter((c) => (c.start + c.end) / 2 >= moment.start && (c.start + c.end) / 2 < moment.end);\n  if (!inside.length) throw new Error(`No speech between ${moment.start} s and ${moment.end} s`);\n\n  // Snap to caption edges, so a clip never starts or ends in the middle of a word.\n  const start = Math.max(0, inside[0].start - 0.15);\n  const end = inside[inside.length - 1].end + 0.35;\n  const seconds = end - start;\n  const stamp = (s) => {\n    const ms = Math.max(0, Math.round(s * 1000));\n    const pad = (v, n = 2) => String(v).padStart(n, '0');\n    return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;\n  };\n  const srt = inside\n    .map((c, i) => `${i + 1}\\n${stamp(c.start - start)} --> ${stamp(Math.min(c.end, end) - start)}\\n${c.text.toUpperCase()}\\n`)\n    .join('\\n');\n\n  // Hook title from the AI step: up to two balanced lines of at most 22 characters,\n  // kept clear of the top of the frame where the app draws its own controls.\n  const hook = String(moment.hook ?? '').trim().replace(/\\s+/g, ' ');\n  const wrap = (limit) => {\n    const out = [];\n    for (const word of hook.split(' ').filter(Boolean)) {\n      const last = out[out.length - 1];\n      if (last && `${last} ${word}`.length <= limit) out[out.length - 1] = `${last} ${word}`;\n      else out.push(word);\n    }\n    return out;\n  };\n  const balanced = wrap(Math.min(22, (hook.length / Math.max(1, Math.ceil(hook.length / 22))) * 1.15));\n  const hookLines = balanced.length <= 2 ? balanced : wrap(22);\n  if (hookLines.length > 2) throw new Error('The hook needs to fit on two lines, about 40 characters');\n\n  const inputs = { source: options.sourceUrl, 'captions.srt': { content: srt }, 'Anton-Regular.ttf': options.fontUrl };\n  const video = [\n    `crop=w=trunc(ih*9/16/2)*2:h=ih:x='min(max(0,iw*${subjectX.toFixed(3)}-ow/2),iw-ow)'`,\n    `scale=${W}:${H}:flags=lanczos`,\n    'setsar=1',\n    \"subtitles=captions.srt:fontsdir=.:force_style='FontName=Anton,FontSize=19,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1.6,Shadow=0.8,Alignment=2,MarginV=105'\",\n  ];\n  hookLines.forEach((line, i) => {\n    inputs[`hook${i + 1}.txt`] = { content: line.toUpperCase() };\n    video.push(\n      `drawtext=fontfile=Anton-Regular.ttf:textfile=hook${i + 1}.txt:expansion=none:fontsize=84:fontcolor=black` +\n        `:box=1:boxcolor=white@0.96:boxborderw=22:x=(w-text_w)/2:y=${250 + i * 132}:alpha='clip((t-0.2)/0.4,0,1)'`,\n    );\n  });\n  const graph = `[0:v]${video.join(',')}[v];[0:a]loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[a]`;\n  const command =\n    `-ss ${start.toFixed(2)} -t ${seconds.toFixed(2)} -i source -filter_complex \"${graph}\" -map \"[v]\" -map \"[a]\" ` +\n    `-c:v libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart short.mp4`;\n  return { command, inputs, start: Number(start.toFixed(2)), seconds: Number(seconds.toFixed(2)) };\n}\n\n// Anton is a free Google Font. Swap in your own brand font as a public https URL.\nconst FONT_URL = 'https://raw.githubusercontent.com/google/fonts/main/ofl/anton/Anton-Regular.ttf';\nconst transcript = $('Transcribe with OpenAI').first().json;\nconst moments = JSON.parse($input.first().json.choices[0].message.content).moments;\nconst sourceUrl = $('Upload the video to Rendobar').first().json.url;\nconst captions = groupWords(transcript.words ?? []);\nreturn moments.map((moment, i) => {\n  const render = buildShortRender(moment, captions, { sourceUrl, fontUrl: FONT_URL });\n  return { json: { clip: i + 1, hook: moment.hook, start: render.start, seconds: render.seconds, render_command: render.command, render_inputs: render.inputs } };\n});"
+      }
+    },
+    {
+      "id": "b3a4362c-c7eb-5b9b-a574-cfcbf1be40b5",
+      "name": "Loop over clips",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1980,
+        40
+      ],
+      "parameters": {
+        "options": {}
+      }
+    },
+    {
+      "id": "14d90e03-36c5-5072-adf1-eddebdc72da2",
+      "name": "Cut the clip",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        40
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "create",
+        "jobType": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ffmpeg"
+        },
+        "inputsMode": "json",
+        "inputs": "={{ JSON.stringify($json.render_inputs) }}",
+        "paramsMode": "fields",
+        "params": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "command": "={{ $json.render_command }}"
+          }
+        },
+        "options": {
+          "callbackUrl": "={{ $execution.resumeUrl }}"
+        },
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "1033d839-106a-5b96-a5df-f8f494964fa1",
+      "name": "Wait for the clip",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2420,
+        40
+      ],
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "POST",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 10,
+        "resumeUnit": "hours",
+        "options": {}
+      },
+      "webhookId": "7a202d0f-438d-5725-a651-da11bcece38d"
+    },
+    {
+      "id": "025ba79b-b208-59d0-aa74-d70e79dc99e0",
+      "name": "Download the clip",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        2640,
+        40
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "get",
+        "jobId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.body.data.jobId }}"
+        },
+        "downloadOutput": true,
+        "outputBinaryProperty": "data",
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "70fb67b5-1136-5d76-ab78-c10967b65c9e",
+      "name": "Upload the Short",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        2860,
+        40
+      ],
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('Build the clip renders').item.json.hook }} #Shorts",
+        "regionCode": "US",
+        "categoryId": "22",
+        "binaryProperty": "data",
+        "options": {
+          "privacyStatus": "private",
+          "description": "Clip {{ $('Build the clip renders').item.json.clip }} from {{ $('Watch the recordings folder').first().json.name }}"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Watch the recordings folder": {
+      "main": [
+        [
+          {
+            "node": "Download the recording",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download the recording": {
+      "main": [
+        [
+          {
+            "node": "Upload the video to Rendobar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload the video to Rendobar": {
+      "main": [
+        [
+          {
+            "node": "Extract the audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract the audio": {
+      "main": [
+        [
+          {
+            "node": "Wait for the audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for the audio": {
+      "main": [
+        [
+          {
+            "node": "Download the audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download the audio": {
+      "main": [
+        [
+          {
+            "node": "Transcribe with OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribe with OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Pick the moments",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick the moments": {
+      "main": [
+        [
+          {
+            "node": "Build the clip renders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build the clip renders": {
+      "main": [
+        [
+          {
+            "node": "Loop over clips",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop over clips": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Cut the clip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cut the clip": {
+      "main": [
+        [
+          {
+            "node": "Wait for the clip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for the clip": {
+      "main": [
+        [
+          {
+            "node": "Download the clip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download the clip": {
+      "main": [
+        [
+          {
+            "node": "Upload the Short",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload the Short": {
+      "main": [
+        [
+          {
+            "node": "Loop over clips",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

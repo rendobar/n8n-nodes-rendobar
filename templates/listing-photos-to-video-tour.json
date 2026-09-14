@@ -1,0 +1,328 @@
+{
+  "name": "Turn listing photos into a vertical video tour for real estate with Rendobar",
+  "nodes": [
+    {
+      "id": "c9ae5918-fde1-521d-a9d1-473b459e9a7b",
+      "name": "How it works",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -800
+      ],
+      "parameters": {
+        "content": "## How it works\n\nAn agent fills in a form with the listing details, links to the photos and their contact details. The workflow turns it into a vertical video tour for Reels, TikTok and Shorts, saves it to Google Drive and emails it to the agent.\n\nA Code node builds one FFmpeg command for the whole tour. Every photo gets its own camera move, a push in, a pull out or a pan, and the photos crossfade into each other. Price, address and room counts sit on a soft gradient along the bottom, and the tour ends on a card with the agent's name, phone and brokerage over a blurred copy of the hero photo. The text travels as files, so a price like $1,250,000 or an address with an apostrophe renders exactly as typed.\n\nRendobar renders the tour while the Wait node parks the execution. Five photos make a video of about 16 seconds.\n\n## Setup steps\n\n1. Create a Rendobar account at rendobar.com, make an API key under Settings, and add it as a Rendobar API credential on every Rendobar node.\n2. In the Code node, set your music track and fonts. The default track is Wallpaper by Kevin MacLeod (incompetech.com) under CC BY 4.0, so credit it or use your own.\n3. Connect Google Drive and Gmail.\n4. Share the form URL with your agents. Photos must be public https links with the hero shot first. Portrait photos fill the frame best.",
+        "height": 720,
+        "width": 700
+      }
+    },
+    {
+      "id": "9cfd61d2-bd73-5459-ac6c-a190710255af",
+      "name": "Section: build",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        180,
+        -60
+      ],
+      "parameters": {
+        "content": "### Build the tour\nThe Code node maps the form to photos, text and your brand settings, then builds the FFmpeg command.",
+        "height": 260,
+        "width": 440,
+        "color": 7
+      }
+    },
+    {
+      "id": "de9b34c2-15f3-592d-a14c-d497ae67399a",
+      "name": "Section: deliver",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        640,
+        -200
+      ],
+      "parameters": {
+        "content": "### Render and deliver\nRendobar renders while the execution parks. Get downloads the video, then Drive keeps a copy and Gmail sends it to the agent.",
+        "height": 460,
+        "width": 700,
+        "color": 7
+      }
+    },
+    {
+      "id": "fff7ddef-a750-57e2-af97-d5bc2dc261c3",
+      "name": "Listing form",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        40
+      ],
+      "parameters": {
+        "formTitle": "Make a listing video tour",
+        "formDescription": "Paste public photo links, one per line, hero shot first. The finished tour arrives by email.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Address",
+              "fieldType": "text",
+              "requiredField": true,
+              "placeholder": "12 Example Court, Springfield"
+            },
+            {
+              "fieldLabel": "Price",
+              "fieldType": "text",
+              "requiredField": true,
+              "placeholder": "$845,000"
+            },
+            {
+              "fieldLabel": "Bedrooms",
+              "fieldType": "number",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Bathrooms",
+              "fieldType": "number",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Square feet",
+              "fieldType": "number",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Photo URLs",
+              "fieldType": "textarea",
+              "requiredField": true,
+              "placeholder": "https://example.com/photo-1.jpg"
+            },
+            {
+              "fieldLabel": "Agent name",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Agent phone",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Brokerage",
+              "fieldType": "text",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Agent email",
+              "fieldType": "email",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "webhookId": "13590382-02f2-5e72-a04b-7a30cc450235"
+    },
+    {
+      "id": "5a3351bc-3181-51d7-a581-f90de1694ba8",
+      "name": "Build the tour render",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        40
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Code node body for \"Listing photos to a video tour\". Embedded verbatim in the\n// n8n template and evaluated by the local test runner.\n// Input: one listing. Output: the Rendobar ffmpeg job's command and inputs.\nfunction buildListingRender(listing) {\n  const W = 1080;\n  const H = 1920;\n  const FPS = 30;\n  const PER = 3.2; // seconds each photo is on screen\n  const XF = 0.7; // crossfade length\n  const END = 3.4; // agent end card\n  const photos = (listing.photos ?? []).filter(Boolean);\n  if (photos.length < 3 || photos.length > 12) throw new Error('A tour needs 3 to 12 photos');\n  for (const key of ['music_url', 'display_font_url', 'body_font_url']) {\n    if (!/^https:\\/\\//.test(String(listing[key] ?? ''))) throw new Error(`${key} must be an https URL`);\n  }\n  const n = photos.length;\n  const frames = Math.round(PER * FPS);\n  const endFrames = Math.round(END * FPS);\n\n  // A different move per photo, so the tour does not feel mechanical.\n  const center = { x: 'iw/2-(iw/zoom/2)', y: 'ih/2-(ih/zoom/2)' };\n  const motions = [\n    { z: `1+0.14*on/${frames}`, ...center },\n    { z: `1.14-0.14*on/${frames}`, ...center },\n    { z: '1.12', x: `(iw-iw/zoom)*on/${frames}`, y: center.y },\n    { z: '1.12', x: `(iw-iw/zoom)*(1-on/${frames})`, y: center.y },\n  ];\n\n  const inputs = {};\n  // The end card reuses the first photo, which is the hero shot of a listing.\n  const graph = [`[0:v]split=2[first][cardsrc]`];\n  photos.forEach((url, i) => {\n    inputs[`photo${i + 1}`] = url;\n    const m = motions[i % motions.length];\n    const src = i === 0 ? '[first]' : `[${i}:v]`;\n    graph.push(\n      `${src}scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,` +\n        `zoompan=z='${m.z}':x='${m.x}':y='${m.y}':d=${frames}:s=${W}x${H}:fps=${FPS},setsar=1,format=yuv420p[p${i}]`,\n    );\n  });\n\n  let prev = 'p0';\n  let offset = 0;\n  for (let i = 1; i < n; i++) {\n    offset += PER - XF;\n    graph.push(`[${prev}][p${i}]xfade=transition=fade:duration=${XF}:offset=${offset.toFixed(2)}[x${i}]`);\n    prev = `x${i}`;\n  }\n  const tourLength = offset + PER;\n  const total = tourLength - XF + END;\n\n  const text = (file, font, size, x, y, start, color = 'white') =>\n    `drawtext=fontfile=${font}:textfile=${file}:expansion=none:fontsize=${size}:fontcolor=${color}` +\n    `:x=${x}:y=${y}:alpha='clip((t-${start})/0.6,0,1)'`;\n  const specs = `${listing.beds} bd · ${listing.baths} ba · ${Number(listing.sqft).toLocaleString('en-US')} sq ft`;\n  Object.assign(inputs, {\n    music: listing.music_url,\n    'display.ttf': listing.display_font_url,\n    'body.ttf': listing.body_font_url,\n    'price.txt': { content: String(listing.price) },\n    'address.txt': { content: String(listing.address) },\n    'specs.txt': { content: specs },\n    'agent.txt': { content: String(listing.agent_name) },\n    'phone.txt': { content: String(listing.agent_phone) },\n    'brokerage.txt': { content: String(listing.brokerage) },\n  });\n\n  // Listing details sit on a soft dark gradient along the bottom of the tour.\n  graph.push(`gradients=s=${W}x760:c0=0x00000000:c1=0x000000d9:x0=0:y0=0:x1=0:y1=760:n=2:r=${FPS}:d=${tourLength.toFixed(2)}[fade]`);\n  graph.push(\n    `[${prev}][fade]overlay=0:${H - 760}:shortest=1,` +\n      [\n        text('price.txt', 'display.ttf', 104, 72, H - 540, 0.5),\n        text('address.txt', 'body.ttf', 46, 76, H - 390, 0.8),\n        text('specs.txt', 'body.ttf', 40, 76, H - 318, 1.1, 'white@0.88'),\n      ].join(',') +\n      '[tour]',\n  );\n  graph.push(\n    `[cardsrc]scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,boxblur=40:2,eq=brightness=-0.44,` +\n      `zoompan=z=1:d=${endFrames}:s=${W}x${H}:fps=${FPS},setsar=1,format=yuv420p,` +\n      [\n        text('agent.txt', 'display.ttf', 100, '(w-text_w)/2', 750, 0.5),\n        text('phone.txt', 'body.ttf', 58, '(w-text_w)/2', 895, 0.8, 'white@0.92'),\n        text('brokerage.txt', 'body.ttf', 46, '(w-text_w)/2', 985, 1.1, 'white@0.78'),\n      ].join(',') +\n      '[card]',\n  );\n  graph.push(`[tour][card]xfade=transition=fade:duration=${XF}:offset=${(tourLength - XF).toFixed(2)}[v]`);\n  graph.push(`[${n}:a]atrim=0:${total.toFixed(2)},asetpts=PTS-STARTPTS,afade=t=in:d=0.8,afade=t=out:st=${(total - 1.8).toFixed(2)}:d=1.8[a]`);\n\n  const photoArgs = photos.map((_, i) => `-i photo${i + 1}`).join(' ');\n  const command =\n    `${photoArgs} -i music -filter_complex \"${graph.join(';')}\" -map \"[v]\" -map \"[a]\" ` +\n    `-c:v libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart tour.mp4`;\n  return { command, inputs, seconds: Number(total.toFixed(2)) };\n}\n\n// Your brand: a licensed music track and two fonts, each a public https URL.\nconst BRAND = {\n  music_url: 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Wallpaper.mp3',\n  display_font_url: 'https://raw.githubusercontent.com/google/fonts/main/ofl/playfairdisplay/PlayfairDisplay%5Bwght%5D.ttf',\n  body_font_url: 'https://raw.githubusercontent.com/google/fonts/main/ofl/notosans/NotoSans%5Bwdth,wght%5D.ttf',\n};\nconst form = $json;\nconst listing = {\n  ...BRAND,\n  photos: String(form['Photo URLs'] ?? '').split(/\\s+/).filter((url) => /^https:\\/\\//.test(url)),\n  price: form['Price'],\n  address: form['Address'],\n  beds: form['Bedrooms'],\n  baths: form['Bathrooms'],\n  sqft: form['Square feet'],\n  agent_name: form['Agent name'],\n  agent_phone: form['Agent phone'],\n  brokerage: form['Brokerage'],\n};\nconst render = buildListingRender(listing);\nreturn { json: { address: listing.address, agent_email: form['Agent email'], seconds: render.seconds, render_command: render.command, render_inputs: render.inputs } };"
+      }
+    },
+    {
+      "id": "bfb8f747-a4a4-5c51-ac63-725e1f00dd57",
+      "name": "Render the tour",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        440,
+        40
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "create",
+        "jobType": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ffmpeg"
+        },
+        "inputsMode": "json",
+        "inputs": "={{ JSON.stringify($json.render_inputs) }}",
+        "paramsMode": "fields",
+        "params": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "command": "={{ $json.render_command }}"
+          }
+        },
+        "options": {
+          "callbackUrl": "={{ $execution.resumeUrl }}"
+        },
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "f2623675-1ebe-5a91-afef-925dbbe91d61",
+      "name": "Wait for the render",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        40
+      ],
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "POST",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 10,
+        "resumeUnit": "hours",
+        "options": {}
+      },
+      "webhookId": "38387de5-4b81-5c33-ab43-696491a51d69"
+    },
+    {
+      "id": "d590d34b-3049-556d-a6fb-b338361ed139",
+      "name": "Download the tour",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        880,
+        40
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "get",
+        "jobId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.body.data.jobId }}"
+        },
+        "downloadOutput": true,
+        "outputBinaryProperty": "data",
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "ab4e8dee-1c95-574a-a49a-da6f6a822328",
+      "name": "Save the tour to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1100,
+        -80
+      ],
+      "parameters": {
+        "name": "={{ $('Build the tour render').item.json.address }} tour.mp4",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "root",
+          "cachedResultName": "/ (Root folder)"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "33295a70-4d41-5091-a2c5-6e6186849786",
+      "name": "Email the agent",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1100,
+        160
+      ],
+      "parameters": {
+        "sendTo": "={{ $('Build the tour render').item.json.agent_email }}",
+        "subject": "=Your video tour for {{ $('Build the tour render').item.json.address }}",
+        "emailType": "text",
+        "message": "=The vertical video tour is attached, {{ $('Build the tour render').item.json.seconds }} seconds long and ready for Reels, TikTok and Shorts. A copy is in Google Drive.",
+        "options": {
+          "attachmentsUi": {
+            "attachmentsBinary": [
+              {
+                "property": "data"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Listing form": {
+      "main": [
+        [
+          {
+            "node": "Build the tour render",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build the tour render": {
+      "main": [
+        [
+          {
+            "node": "Render the tour",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render the tour": {
+      "main": [
+        [
+          {
+            "node": "Wait for the render",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for the render": {
+      "main": [
+        [
+          {
+            "node": "Download the tour",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download the tour": {
+      "main": [
+        [
+          {
+            "node": "Save the tour to Drive",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Email the agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
