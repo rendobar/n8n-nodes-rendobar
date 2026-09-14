@@ -9,10 +9,12 @@ function buildQuoteRender(row) {
   const quote = String(row.quote ?? '').trim().replace(/\s+/g, ' ');
   const author = String(row.author ?? '').trim();
   const lang = String(row.language ?? 'en').trim() || 'en';
+  const family = String(row.font_family ?? '').trim();
   if (!quote) throw new Error('This row has no quote text');
   for (const key of ['background_url', 'music_url', 'font_url']) {
     if (!/^https:\/\//.test(String(row[key] ?? ''))) throw new Error(`Column ${key} must be an https URL`);
   }
+  if (!family) throw new Error('Column font_family must name the font in font_url, for example Cairo or Noto Sans Thai');
 
   // Wrap into balanced lines. Whole phrases (text between spaces) stay together
   // where they fit, so a Thai clause is never split from its connector. A phrase
@@ -53,38 +55,52 @@ function buildQuoteRender(row) {
   const widthPerGrapheme = { ja: 1, zh: 1, ko: 0.95, th: 0.55, ar: 0.45, he: 0.5 }[lang.slice(0, 2)] ?? 0.5;
   const longest = Math.max(...lines.map(graphemes));
   const size = Math.max(48, Math.min(96, Math.floor(920 / (longest * widthPerGrapheme))));
-  const lineHeight = Math.round(size * 1.4);
+  const lineHeight = Math.round(size * 1.45);
   const authorSize = Math.max(34, Math.round(size * 0.55));
-  const blockHeight = lines.length * lineHeight + (author ? Math.round(authorSize * 2.2) : 0);
+  const blockHeight = lines.length * lineHeight + (author ? Math.round(authorSize * 2) : 0);
   const top = Math.round((H - blockHeight) / 2);
 
-  // Text travels as files, never inside the filtergraph, so apostrophes, colons
-  // and percent signs in a quote cannot break the command.
-  const inputs = { background: row.background_url, music: row.music_url, 'font.ttf': row.font_url };
-  const text = (file, fontSize, y, start, color) =>
-    `drawtext=fontfile=font.ttf:textfile=${file}:expansion=none:fontsize=${fontSize}:fontcolor=${color}` +
-    `:borderw=3:bordercolor=black@0.45:x=(w-text_w)/2:y=${y}:alpha='clip((t-${start.toFixed(2)})/0.7,0,1)'`;
-  // drawtext lays every line out left to right unless the text says otherwise, so a trailing
-  // Arabic comma lands on the wrong side. A right-to-left mark at each end pins the direction.
+  // The text is drawn by libass from a subtitle file, with harfbuzz shaping. FFmpeg's
+  // drawtext swaps Arabic letters for legacy presentation forms that modern fonts such
+  // as Cairo leave out, and draws empty boxes for them. libass still lays a line out
+  // left to right unless the text says otherwise, so right-to-left lines carry a
+  // right-to-left mark at each end to keep trailing punctuation on the correct side.
   const rtl = ['ar', 'fa', 'he', 'ur', 'ps', 'yi'].includes(lang.slice(0, 2));
   const directed = (s) => (rtl ? `‏${s}‏` : s);
-  const texts = lines.map((line, i) => {
-    inputs[`line${i + 1}.txt`] = { content: directed(line) };
-    return text(`line${i + 1}.txt`, size, top + i * lineHeight, 0.6 + i * 0.45, 'white');
-  });
+  // In a subtitle file braces open override blocks and a backslash starts a tag.
+  const escape = (s) => s.replace(/\\/g, '⧵').replace(/[{}]/g, (c) => `\\${c}`);
+  const stamp = (s) => {
+    const cs = Math.round(s * 100);
+    const pad = (v) => String(v).padStart(2, '0');
+    return `${Math.floor(cs / 360000)}:${pad(Math.floor(cs / 6000) % 60)}:${pad(Math.floor(cs / 100) % 60)}.${pad(cs % 100)}`;
+  };
+  const style = (name, px, alpha, outline) =>
+    `Style: ${name},${family},${px},&H${alpha}FFFFFF,&H${alpha}FFFFFF,&H73000000,&H00000000,0,0,0,0,100,100,0,0,1,${outline},0,5,60,60,0,1`;
+  const event = (styleName, start, y, text) =>
+    `Dialogue: 0,${stamp(start)},${stamp(DURATION)},${styleName},,0,0,0,,{\\pos(${W / 2},${y})\\fad(700,0)}${directed(escape(text))}`;
+  const events = lines.map((line, i) => event('Quote', 0.6 + i * 0.45, top + i * lineHeight + Math.round(lineHeight / 2), line));
   if (author) {
-    inputs['author.txt'] = { content: directed(author) };
-    const authorY = top + lines.length * lineHeight + Math.round(authorSize * 1.2);
-    texts.push(text('author.txt', authorSize, authorY, 0.9 + lines.length * 0.45, 'white@0.85'));
+    events.push(event('Author', 0.9 + lines.length * 0.45, top + lines.length * lineHeight + Math.round(authorSize * 1.1), author));
   }
+  const subtitles = [
+    '[Script Info]', 'ScriptType: v4.00+', `PlayResX: ${W}`, `PlayResY: ${H}`, 'WrapStyle: 2', 'ScaledBorderAndShadow: yes', '',
+    '[V4+ Styles]',
+    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+    style('Quote', Math.round(size * 1.2), '00', 3),
+    style('Author', Math.round(authorSize * 1.2), '26', 2),
+    '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
+    ...events,
+  ].join('\n') + '\n';
+
+  // The font sits in its own folder, so libass never tries to read the background video as a font.
+  const inputs = { background: row.background_url, music: row.music_url, 'fonts/font.ttf': row.font_url, 'quote.ass': { content: subtitles } };
 
   // Slow push-in: the background grows 6% over the clip, re-evaluated per frame.
   const zoom = '(1+0.006*t)';
   const graph = [
     `[0:v]scale=w='trunc(${W}*${zoom}/2)*2':h='trunc(${H}*${zoom}/2)*2':force_original_aspect_ratio=increase:force_divisible_by=2:eval=frame,crop=${W}:${H},setsar=1,fps=30,eq=brightness=-0.05[bg]`,
     `color=c=black@0.3:s=${W}x${H}:r=30:d=${DURATION}[shade]`,
-    `[bg][shade]overlay=shortest=1[base]`,
-    `[base]${texts.join(',')},fade=t=out:st=${DURATION - 0.7}:d=0.7[v]`,
+    `[bg][shade]overlay=shortest=1,ass=quote.ass:fontsdir=fonts:shaping=complex,fade=t=out:st=${DURATION - 0.7}:d=0.7[v]`,
     `[1:a]atrim=0:${DURATION},asetpts=PTS-STARTPTS,afade=t=in:d=1,afade=t=out:st=${DURATION - 1.5}:d=1.5[a]`,
   ].join(';');
 

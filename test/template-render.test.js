@@ -17,7 +17,7 @@ const { groupWords, buildShortRender } = load('shorts-render.js', ['groupWords',
 const { buildListingRender } = load('listing-render.js', ['buildListingRender']);
 const { checkUpload } = load('upload-qc.js', ['checkUpload']);
 
-const media = { background_url: 'https://x.test/b.mp4', music_url: 'https://x.test/m.mp3', font_url: 'https://x.test/f.ttf' };
+const media = { background_url: 'https://x.test/b.mp4', music_url: 'https://x.test/m.mp3', font_url: 'https://x.test/f.ttf', font_family: 'Cairo' };
 
 test('Thai quotes wrap on phrases, not in the middle of a clause', () => {
 	const r = buildQuoteRender({ ...media, language: 'th', quote: 'อย่านับวันที่ผ่านไป จงทำให้ทุกวันมีความหมาย' });
@@ -33,21 +33,25 @@ test('short quotes balance their lines instead of leaving one word behind', () =
 });
 
 test('right-to-left lines carry direction marks so a trailing comma stays on the left', () => {
-	const r = buildQuoteRender({ ...media, language: 'ar', quote: 'من جد وجد، ومن زرع حصد', author: 'مثل عربي' });
-	assert.equal(r.inputs['line1.txt'].content, '‏من جد وجد،‏');
-	assert.equal(r.inputs['author.txt'].content, '‏مثل عربي‏');
-	assert.equal(buildQuoteRender({ ...media, language: 'en', quote: 'Make the days count.' }).inputs['line1.txt'].content, 'Make the days count.');
+	const ass = buildQuoteRender({ ...media, language: 'ar', quote: 'من جد وجد، ومن زرع حصد', author: 'مثل عربي' }).inputs['quote.ass'].content;
+	assert.ok(ass.includes('}‏من جد وجد،‏\n'), 'line 1 is wrapped in right-to-left marks');
+	assert.ok(ass.includes('}‏مثل عربي‏\n'), 'the author is wrapped too');
+	const english = buildQuoteRender({ ...media, language: 'en', quote: 'Make the days count.' }).inputs['quote.ass'].content;
+	assert.ok(english.includes('}Make the days count.\n') && !english.includes('‏'), 'left-to-right text carries no marks');
 });
 
-test('quote text travels as files and never inside the FFmpeg command', () => {
-	const r = buildQuoteRender({ ...media, language: 'en', quote: "It's 100% true: don't quote me.", author: "O'Brien" });
+test('quote text travels in a subtitle file shaped by libass, never inside the FFmpeg command', () => {
+	const r = buildQuoteRender({ ...media, language: 'en', quote: "It's 100% {true}: don't quote me.", author: "O'Brien" });
 	assert.ok(!r.command.includes("It's") && !r.command.includes("O'Brien"), 'text leaked into the command');
-	assert.match(r.command, /textfile=line1\.txt:expansion=none/);
-	assert.deepEqual(r.inputs['author.txt'], { content: "O'Brien" });
+	assert.match(r.command, /ass=quote\.ass:fontsdir=fonts:shaping=complex/);
+	assert.equal(r.inputs['fonts/font.ttf'], media.font_url);
+	assert.ok(r.inputs['quote.ass'].content.includes('100% \\{true\\}:'), 'braces are escaped so they cannot open an override block');
+	assert.ok(r.inputs['quote.ass'].content.includes('Style: Quote,Cairo,'), 'the style names the font family');
 });
 
-test('a quote row with a missing media column names the column', () => {
-	assert.throws(() => buildQuoteRender({ quote: 'x', music_url: media.music_url, font_url: media.font_url }), /background_url/);
+test('a quote row with a missing media or font column names the column', () => {
+	assert.throws(() => buildQuoteRender({ quote: 'x', music_url: media.music_url, font_url: media.font_url, font_family: 'Cairo' }), /background_url/);
+	assert.throws(() => buildQuoteRender({ ...media, quote: 'x', font_family: '' }), /font_family/);
 });
 
 test('captions break at sentence ends and each one lands in exactly one clip', () => {
