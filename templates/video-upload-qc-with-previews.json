@@ -1,0 +1,632 @@
+{
+  "name": "Check Drive video uploads and post thumbnail and GIF previews with Rendobar",
+  "nodes": [
+    {
+      "id": "13ee4549-daac-5d0d-ad59-e3c548a6d1bf",
+      "name": "How it works",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -800
+      ],
+      "parameters": {
+        "content": "## How it works\n\nEvery video that lands in a Google Drive folder gets checked before anyone uses it. The workflow runs ffprobe on Rendobar, checks the file against your rules and posts the result to Slack, with a poster frame and a looping GIF when the file passes.\n\nThe check reads resolution, duration, audio, codec, frame rate and dynamic range from the ffprobe report. The rules live in one object in the Code node, so a team that needs 4K, a length limit or silent clips changes one line. A file that fails goes to Slack with the list of failed checks and nothing else runs.\n\nA file that passes gets two more Rendobar jobs. FFmpeg's thumbnail filter scores 120 frames from the first minute and keeps the most representative one, so the poster is never a black fade. The GIF comes from the middle of the video with error-diffusion dithering, so skies do not show a dot grid. Each job parks on a Wait node until Rendobar calls back.\n\n## Setup steps\n\n1. Create a Rendobar account at rendobar.com, make an API key under Settings, and add it as a Rendobar API credential on every Rendobar node.\n2. Connect Google Drive and pick the folder to watch.\n3. Connect Slack and pick the channel in all three Slack nodes.\n4. Adjust the rules in the Check the upload node.",
+        "height": 720,
+        "width": 700
+      }
+    },
+    {
+      "id": "413740c6-2e81-529d-acce-fe789f4a8d53",
+      "name": "Section: probe",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        620,
+        -60
+      ],
+      "parameters": {
+        "content": "### Probe and check\nRendobar runs ffprobe on the upload and the Code node compares the report with your rules.",
+        "height": 260,
+        "width": 1100,
+        "color": 7
+      }
+    },
+    {
+      "id": "57f9afdf-bccb-5fd3-a5f2-d88c5db10350",
+      "name": "Section: previews",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1960,
+        -200
+      ],
+      "parameters": {
+        "content": "### Previews\nTwo more jobs make a poster frame and a GIF. Each waits for its callback, then goes to Slack.",
+        "height": 240,
+        "width": 1780,
+        "color": 7
+      }
+    },
+    {
+      "id": "e3746b3b-14a4-5067-a7c6-85119e67f5f3",
+      "name": "Section: failed",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1960,
+        220
+      ],
+      "parameters": {
+        "content": "### Failed checks\nA file that fails a rule goes straight to Slack with the list of failed checks.",
+        "height": 240,
+        "width": 440,
+        "color": 7
+      }
+    },
+    {
+      "id": "b14fc84f-09c4-571b-aac8-d6554c61979b",
+      "name": "Watch the uploads folder",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        40
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "event": "fileCreated",
+        "options": {}
+      }
+    },
+    {
+      "id": "653ffc51-bdac-5090-a151-15a69e8b6313",
+      "name": "Download the upload",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        220,
+        40
+      ],
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.id }}"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "d718e107-f89a-5ed7-a8f3-8967a2e03ea3",
+      "name": "Upload the video to Rendobar",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        440,
+        40
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "binaryProperty": "data"
+      }
+    },
+    {
+      "id": "68b7dc82-0bbd-5f25-a0b3-b9b95a57858b",
+      "name": "Probe the video",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        660,
+        40
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "create",
+        "jobType": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ffprobe"
+        },
+        "inputsMode": "json",
+        "inputs": "={{ JSON.stringify({}) }}",
+        "paramsMode": "fields",
+        "params": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "command": "={{ $json.url }}"
+          }
+        },
+        "options": {
+          "callbackUrl": "={{ $execution.resumeUrl }}"
+        },
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "593d7b64-5e6a-5d1a-afb7-88f0630bf866",
+      "name": "Wait for the probe",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        40
+      ],
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "POST",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 10,
+        "resumeUnit": "hours",
+        "options": {}
+      },
+      "webhookId": "0a159cf2-2f9e-5fd3-aec4-ee407f053b88"
+    },
+    {
+      "id": "90a8abd7-53fd-5c76-ad8c-7deebf4cc93f",
+      "name": "Read the probe report",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        40
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "get",
+        "jobId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.body.data.jobId }}"
+        },
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "ad20f0b3-2e19-517e-a213-728faadb0cd5",
+      "name": "Check the upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        40
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Code node bodies for \"Drive video upload QC with thumbnail and GIF preview\".\n// Embedded verbatim in the n8n template and evaluated by the local test runner.\n\n// Turn Rendobar's ffprobe output into pass/fail checks a team can act on.\nfunction checkUpload(probe, rules = {}) {\n  const r = { minShortSide: 1080, maxDurationSec: 600, requireAudio: true, allowedCodecs: ['h264', 'hevc', 'vp9', 'av1'], minFps: 23, ...rules };\n  const summary = probe.summary ?? {};\n  const video = summary.video ?? {};\n  const stream = (probe.streams ?? []).find((s) => s.codec_type === 'video') ?? {};\n  const [num, den] = String(stream.avg_frame_rate || stream.r_frame_rate || '0/1').split('/').map(Number);\n  const fps = video.fps ?? (den ? num / den : 0);\n  const shortSide = Math.min(video.width ?? 0, video.height ?? 0);\n  const duration = Number(summary.durationSec ?? 0);\n  const audioCount = summary.streamCounts?.audio ?? 0;\n  const checks = [\n    { check: 'Resolution', value: `${video.width}x${video.height}`, rule: `short side at least ${r.minShortSide} px`, pass: shortSide >= r.minShortSide },\n    { check: 'Duration', value: `${duration.toFixed(1)} s`, rule: `at most ${r.maxDurationSec} s`, pass: duration > 0 && duration <= r.maxDurationSec },\n    { check: 'Audio', value: audioCount ? (summary.audio?.codec ?? 'present') : 'none', rule: 'has an audio track', pass: !r.requireAudio || audioCount > 0 },\n    { check: 'Video codec', value: video.codec ?? 'none', rule: r.allowedCodecs.join(', '), pass: r.allowedCodecs.includes(video.codec) },\n    { check: 'Frame rate', value: fps ? `${Number(fps).toFixed(2)} fps` : 'unknown', rule: `at least ${r.minFps} fps`, pass: fps >= r.minFps },\n    { check: 'Dynamic range', value: video.isHdr ? 'HDR' : 'SDR', rule: 'SDR', pass: !video.isHdr },\n  ];\n  return { passed: checks.every((c) => c.pass), failed: checks.filter((c) => !c.pass).map((c) => c.check), checks, duration };\n}\n\n// Poster frame: FFmpeg's thumbnail filter scores 120 frames sampled over the first\n// minute and keeps the most representative one, so fades and black frames lose.\nfunction buildThumbnailRender() {\n  return {\n    command: '-ss 3 -t 60 -i video -vf \"fps=2,thumbnail=120,scale=1280:-2\" -frames:v 1 -q:v 2 thumbnail.jpg',\n    inputs: {},\n  };\n}\n\n// Looping preview from the middle of the video, with error-diffusion dithering\n// and a palette tuned to what moves, so skies do not show a dot grid.\nfunction buildGifRender(duration) {\n  const start = Math.max(0, Math.round(duration * 0.55 * 10) / 10);\n  return {\n    command:\n      `-ss ${start} -t 4 -i video -filter_complex \"fps=12,scale=480:-1:flags=lanczos,split[a][b];` +\n      `[a]palettegen=max_colors=160:stats_mode=diff[p];[b][p]paletteuse=dither=sierra2_4a:diff_mode=rectangle\" -loop 0 preview.gif`,\n    inputs: {},\n  };\n}\n\n// Your rules. A team shooting vertical 4K would set minShortSide to 2160, for example.\nconst RULES = { minShortSide: 1080, maxDurationSec: 600, requireAudio: true, minFps: 23 };\nconst qc = checkUpload($json.data ?? {}, RULES);\nconst video = $('Upload the video to Rendobar').item.json.url;\nconst thumbnail = buildThumbnailRender();\nconst gif = buildGifRender(qc.duration);\nreturn { json: {\n  file_name: $('Watch the uploads folder').item.json.name,\n  passed: qc.passed,\n  failed: qc.failed,\n  report: qc.checks.map((c) => `${c.pass ? 'PASS' : 'FAIL'} ${c.check}: ${c.value} (${c.rule})`).join('\\n'),\n  thumbnail_command: thumbnail.command,\n  thumbnail_inputs: { video, ...thumbnail.inputs },\n  gif_command: gif.command,\n  gif_inputs: { video, ...gif.inputs },\n} };"
+      }
+    },
+    {
+      "id": "2f860b90-0de1-5761-a909-16800e633b02",
+      "name": "Passed every check?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        40
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8d8c2bd1-c9ce-5e55-ad00-3869e4317d8e",
+              "leftValue": "={{ $json.passed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "445c34eb-99d8-5d93-ad68-59c339b5c5f9",
+      "name": "Make the thumbnail",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        -80
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "create",
+        "jobType": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ffmpeg"
+        },
+        "inputsMode": "json",
+        "inputs": "={{ JSON.stringify($('Check the upload').item.json.thumbnail_inputs) }}",
+        "paramsMode": "fields",
+        "params": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "command": "={{ $('Check the upload').item.json.thumbnail_command }}"
+          }
+        },
+        "options": {
+          "callbackUrl": "={{ $execution.resumeUrl }}"
+        },
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "eee0c6c8-1053-5faf-a0aa-121d40c2f9ee",
+      "name": "Wait for the thumbnail",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        -80
+      ],
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "POST",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 10,
+        "resumeUnit": "hours",
+        "options": {}
+      },
+      "webhookId": "c22dfbc7-1595-5da6-ac3d-47c7319313cf"
+    },
+    {
+      "id": "b986f954-2950-5312-a87f-73bc996755b3",
+      "name": "Download the thumbnail",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        -80
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "get",
+        "jobId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.body.data.jobId }}"
+        },
+        "downloadOutput": true,
+        "outputBinaryProperty": "data",
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "fffa6750-7f06-5cdb-ad46-8796b3e2e5be",
+      "name": "Post the thumbnail to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        2420,
+        -80
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "binaryPropertyName": "data",
+        "options": {
+          "channelId": "",
+          "initialComment": "={{ $('Check the upload').item.json.file_name }} passed upload QC\n{{ $('Check the upload').item.json.report }}"
+        }
+      }
+    },
+    {
+      "id": "257c33eb-0e54-5cd8-a879-04411f9cbda3",
+      "name": "Make the GIF preview",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        2640,
+        -80
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "create",
+        "jobType": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ffmpeg"
+        },
+        "inputsMode": "json",
+        "inputs": "={{ JSON.stringify($('Check the upload').item.json.gif_inputs) }}",
+        "paramsMode": "fields",
+        "params": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "command": "={{ $('Check the upload').item.json.gif_command }}"
+          }
+        },
+        "options": {
+          "callbackUrl": "={{ $execution.resumeUrl }}"
+        },
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "db224c10-25dd-58c1-ac54-a03328ec977b",
+      "name": "Wait for the GIF",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2860,
+        -80
+      ],
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "POST",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 10,
+        "resumeUnit": "hours",
+        "options": {}
+      },
+      "webhookId": "f3fde4fe-4ff5-5f72-a707-78256adfa0da"
+    },
+    {
+      "id": "7b85dd75-22d5-55e6-a715-089614e5106a",
+      "name": "Download the GIF",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        3080,
+        -80
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "get",
+        "jobId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.body.data.jobId }}"
+        },
+        "downloadOutput": true,
+        "outputBinaryProperty": "data",
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "5842aeb7-cb9f-51f3-a982-0554fda82c20",
+      "name": "Post the GIF to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        3300,
+        -80
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "upload",
+        "binaryPropertyName": "data",
+        "options": {
+          "channelId": "",
+          "initialComment": "=Preview of {{ $('Check the upload').item.json.file_name }}"
+        }
+      }
+    },
+    {
+      "id": "6b1e0175-1266-5ab6-aefe-9392de348f9d",
+      "name": "Post the failed checks to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1760,
+        320
+      ],
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "text": "={{ $json.file_name }} failed upload QC: {{ $json.failed.join(', ') }}\n```\n{{ $json.report }}\n```",
+        "otherOptions": {}
+      }
+    }
+  ],
+  "connections": {
+    "Watch the uploads folder": {
+      "main": [
+        [
+          {
+            "node": "Download the upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download the upload": {
+      "main": [
+        [
+          {
+            "node": "Upload the video to Rendobar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload the video to Rendobar": {
+      "main": [
+        [
+          {
+            "node": "Probe the video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Probe the video": {
+      "main": [
+        [
+          {
+            "node": "Wait for the probe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for the probe": {
+      "main": [
+        [
+          {
+            "node": "Read the probe report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read the probe report": {
+      "main": [
+        [
+          {
+            "node": "Check the upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check the upload": {
+      "main": [
+        [
+          {
+            "node": "Passed every check?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Passed every check?": {
+      "main": [
+        [
+          {
+            "node": "Make the thumbnail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post the failed checks to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make the thumbnail": {
+      "main": [
+        [
+          {
+            "node": "Wait for the thumbnail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for the thumbnail": {
+      "main": [
+        [
+          {
+            "node": "Download the thumbnail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download the thumbnail": {
+      "main": [
+        [
+          {
+            "node": "Post the thumbnail to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post the thumbnail to Slack": {
+      "main": [
+        [
+          {
+            "node": "Make the GIF preview",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Make the GIF preview": {
+      "main": [
+        [
+          {
+            "node": "Wait for the GIF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for the GIF": {
+      "main": [
+        [
+          {
+            "node": "Download the GIF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download the GIF": {
+      "main": [
+        [
+          {
+            "node": "Post the GIF to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

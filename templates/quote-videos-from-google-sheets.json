@@ -1,0 +1,365 @@
+{
+  "name": "Turn a sheet of quotes into vertical quote videos in any language with Rendobar",
+  "nodes": [
+    {
+      "id": "4358e995-a5a4-576d-a118-a87a5e104ac3",
+      "name": "How it works",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        -780
+      ],
+      "parameters": {
+        "content": "## How it works\n\nAdd a row to a Google Sheet with a quote, its author, a language code and links to a background clip, a music track and a font. Each new row becomes a 10 second vertical quote video on YouTube.\n\nA Code node wraps the quote into balanced lines with Intl.Segmenter, so Thai, Japanese and Chinese break on real word boundaries and Arabic stays right to left. Every line travels to Rendobar as its own text file, so apostrophes, colons and percent signs in a quote never break the FFmpeg command. Rendobar renders a slow push-in on the background, lines that fade in one after another, and a music bed.\n\nThe job carries the Wait node's resume URL as its callback, so the execution parks for free while FFmpeg works. When the video is ready the workflow downloads it, uploads it to YouTube as private and marks the row done. Rows run one at a time.\n\n## Setup steps\n\n1. Create a Rendobar account at rendobar.com, make an API key under Settings, and add it as a Rendobar API credential on every Rendobar node.\n2. Make a sheet with the columns quote, author, language, background_url, music_url, font_url, status and video_id.\n3. Connect Google Sheets in both Sheets nodes and YouTube in the upload node.\n4. Use a background clip of at least 10 seconds, so nothing loops, and a font that covers your language, such as a Noto font.",
+        "height": 700,
+        "width": 700
+      }
+    },
+    {
+      "id": "df7294e6-ddd4-5d59-a6c2-605bc4dd9490",
+      "name": "Section: render",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        400,
+        -60
+      ],
+      "parameters": {
+        "content": "### Wrap and render\nThe Code node splits the quote into lines and builds the FFmpeg command. Rendobar renders while the Wait node parks the execution.",
+        "height": 260,
+        "width": 660,
+        "color": 7
+      }
+    },
+    {
+      "id": "c9fe0a5d-bad4-5cf6-aa0a-73763aef73a9",
+      "name": "Section: publish",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        -60
+      ],
+      "parameters": {
+        "content": "### Publish\nGet downloads the video, YouTube receives it as private, and the row is marked done so it never renders twice.",
+        "height": 260,
+        "width": 660,
+        "color": 7
+      }
+    },
+    {
+      "id": "86cb470c-6182-5608-a5f8-613e2cafad16",
+      "name": "Watch for new quotes",
+      "type": "n8n-nodes-base.googleSheetsTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        40
+      ],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "event": "rowAdded",
+        "options": {}
+      }
+    },
+    {
+      "id": "b89734ad-e3f3-5bb5-a8d2-a76bedf61ad3",
+      "name": "Loop over rows",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        220,
+        40
+      ],
+      "parameters": {
+        "options": {}
+      }
+    },
+    {
+      "id": "98d8aeef-e938-5ba5-aec6-6bbbaa07d49f",
+      "name": "Build the quote render",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        40
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Code node body for \"Sheet of quotes to quote videos\". The n8n template embeds\n// this function verbatim and the local test runner evaluates the same file, so the\n// command n8n builds is the command that was rendered and checked.\n// Input: one sheet row. Output: the Rendobar ffmpeg job's command and inputs.\nfunction buildQuoteRender(row) {\n  const DURATION = 10;\n  const W = 1080;\n  const H = 1920;\n  const quote = String(row.quote ?? '').trim().replace(/\\s+/g, ' ');\n  const author = String(row.author ?? '').trim();\n  const lang = String(row.language ?? 'en').trim() || 'en';\n  if (!quote) throw new Error('This row has no quote text');\n  for (const key of ['background_url', 'music_url', 'font_url']) {\n    if (!/^https:\\/\\//.test(String(row[key] ?? ''))) throw new Error(`Column ${key} must be an https URL`);\n  }\n\n  // Wrap into balanced lines. Whole phrases (text between spaces) stay together\n  // where they fit, so a Thai clause is never split from its connector. A phrase\n  // too long for one line falls back to Intl.Segmenter word boundaries, which\n  // work for Thai, Japanese and Chinese. Widths count graphemes, so Thai vowel\n  // and tone marks do not count as extra characters.\n  const graphemes = (s) => [...new Intl.Segmenter(lang, { granularity: 'grapheme' }).segment(s)].length;\n  const maxPerLine = { th: 22, ja: 12, zh: 12, ko: 14, ar: 20, he: 20 }[lang.slice(0, 2)] ?? 22;\n  const units = [];\n  for (const phrase of quote.split(' ')) {\n    if (graphemes(phrase) <= maxPerLine) {\n      units.push({ text: phrase, space: true });\n      continue;\n    }\n    let first = true;\n    for (const { segment } of new Intl.Segmenter(lang, { granularity: 'word' }).segment(phrase)) {\n      units.push({ text: segment, space: first });\n      first = false;\n    }\n  }\n  const lineCount = Math.ceil(graphemes(quote) / maxPerLine);\n  const target = Math.min(maxPerLine, (graphemes(quote) / lineCount) * 1.15);\n  const lines = [];\n  let current = '';\n  for (const unit of units) {\n    const joined = current ? current + (unit.space ? ' ' : '') + unit.text : unit.text;\n    const punctuationOnly = /^[\\p{P}]+$/u.test(unit.text);\n    if (current && !punctuationOnly && graphemes(joined) > target) {\n      lines.push(current);\n      current = unit.text;\n    } else {\n      current = joined;\n    }\n  }\n  if (current) lines.push(current);\n\n  // Size to the longest line: about half an em per Latin grapheme, a full em for CJK.\n  const widthPerGrapheme = { ja: 1, zh: 1, ko: 0.95, th: 0.55, ar: 0.45, he: 0.5 }[lang.slice(0, 2)] ?? 0.5;\n  const longest = Math.max(...lines.map(graphemes));\n  const size = Math.max(48, Math.min(96, Math.floor(920 / (longest * widthPerGrapheme))));\n  const lineHeight = Math.round(size * 1.4);\n  const authorSize = Math.max(34, Math.round(size * 0.55));\n  const blockHeight = lines.length * lineHeight + (author ? Math.round(authorSize * 2.2) : 0);\n  const top = Math.round((H - blockHeight) / 2);\n\n  // Text travels as files, never inside the filtergraph, so apostrophes, colons\n  // and percent signs in a quote cannot break the command.\n  const inputs = { background: row.background_url, music: row.music_url, 'font.ttf': row.font_url };\n  const text = (file, fontSize, y, start, color) =>\n    `drawtext=fontfile=font.ttf:textfile=${file}:expansion=none:fontsize=${fontSize}:fontcolor=${color}` +\n    `:borderw=3:bordercolor=black@0.45:x=(w-text_w)/2:y=${y}:alpha='clip((t-${start.toFixed(2)})/0.7,0,1)'`;\n  const texts = lines.map((line, i) => {\n    inputs[`line${i + 1}.txt`] = { content: line };\n    return text(`line${i + 1}.txt`, size, top + i * lineHeight, 0.6 + i * 0.45, 'white');\n  });\n  if (author) {\n    inputs['author.txt'] = { content: author };\n    const authorY = top + lines.length * lineHeight + Math.round(authorSize * 1.2);\n    texts.push(text('author.txt', authorSize, authorY, 0.9 + lines.length * 0.45, 'white@0.85'));\n  }\n\n  // Slow push-in: the background grows 6% over the clip, re-evaluated per frame.\n  const zoom = '(1+0.006*t)';\n  const graph = [\n    `[0:v]scale=w='trunc(${W}*${zoom}/2)*2':h='trunc(${H}*${zoom}/2)*2':force_original_aspect_ratio=increase:force_divisible_by=2:eval=frame,crop=${W}:${H},setsar=1,fps=30,eq=brightness=-0.05[bg]`,\n    `color=c=black@0.3:s=${W}x${H}:r=30:d=${DURATION}[shade]`,\n    `[bg][shade]overlay=shortest=1[base]`,\n    `[base]${texts.join(',')},fade=t=out:st=${DURATION - 0.7}:d=0.7[v]`,\n    `[1:a]atrim=0:${DURATION},asetpts=PTS-STARTPTS,afade=t=in:d=1,afade=t=out:st=${DURATION - 1.5}:d=1.5[a]`,\n  ].join(';');\n\n  const command =\n    `-i background -i music -filter_complex \"${graph}\" -map \"[v]\" -map \"[a]\" -t ${DURATION} -r 30 ` +\n    `-c:v libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart quote.mp4`;\n  return { command, inputs, lines };\n}\n\nconst render = buildQuoteRender($json);\nreturn { json: { ...$json, render_command: render.command, render_inputs: render.inputs } };"
+      }
+    },
+    {
+      "id": "033e00d1-d34f-5406-a5f0-c490e01d12a3",
+      "name": "Render the quote video",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        660,
+        40
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "create",
+        "jobType": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ffmpeg"
+        },
+        "inputsMode": "json",
+        "inputs": "={{ JSON.stringify($json.render_inputs) }}",
+        "paramsMode": "fields",
+        "params": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "command": "={{ $json.render_command }}"
+          }
+        },
+        "options": {
+          "callbackUrl": "={{ $execution.resumeUrl }}"
+        },
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "3d869a5c-620b-5f02-a45e-e2016c252b1e",
+      "name": "Wait for the render",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        40
+      ],
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "POST",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 10,
+        "resumeUnit": "hours",
+        "options": {}
+      },
+      "webhookId": "ba5aa191-5e0d-5f0e-ac31-c5624e3d8fa7"
+    },
+    {
+      "id": "d849673c-f2eb-504a-a776-65605460fd68",
+      "name": "Download the video",
+      "type": "@rendobar/n8n-nodes-rendobar.rendobar",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        40
+      ],
+      "parameters": {
+        "resource": "job",
+        "operation": "get",
+        "jobId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.body.data.jobId }}"
+        },
+        "downloadOutput": true,
+        "outputBinaryProperty": "data",
+        "output": "simplified"
+      }
+    },
+    {
+      "id": "554016cf-5e27-5860-a967-ff80f32be92c",
+      "name": "Upload to YouTube",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        40
+      ],
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ $('Build the quote render').item.json.quote.slice(0, 95) }}",
+        "regionCode": "US",
+        "categoryId": "22",
+        "binaryProperty": "data",
+        "options": {
+          "privacyStatus": "private",
+          "description": "={{ $('Build the quote render').item.json.quote }} ({{ $('Build the quote render').item.json.author }})"
+        }
+      }
+    },
+    {
+      "id": "a0ec48fb-0a38-5fe3-aabe-695beeb71841",
+      "name": "Mark the row done",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1540,
+        40
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $('Build the quote render').item.json.row_number }}",
+            "status": "done",
+            "video_id": "={{ $json.id }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "video_id",
+              "displayName": "video_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Watch for new quotes": {
+      "main": [
+        [
+          {
+            "node": "Loop over rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop over rows": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Build the quote render",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build the quote render": {
+      "main": [
+        [
+          {
+            "node": "Render the quote video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Render the quote video": {
+      "main": [
+        [
+          {
+            "node": "Wait for the render",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for the render": {
+      "main": [
+        [
+          {
+            "node": "Download the video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download the video": {
+      "main": [
+        [
+          {
+            "node": "Upload to YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to YouTube": {
+      "main": [
+        [
+          {
+            "node": "Mark the row done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark the row done": {
+      "main": [
+        [
+          {
+            "node": "Loop over rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
