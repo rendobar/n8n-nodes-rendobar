@@ -14,8 +14,8 @@ Execute Command node.
 |---|---|---|
 | [Compress Google Drive videos under 25 MB and send them to Telegram](./compress-drive-videos-to-25mb-telegram.json) | New file in a Drive folder, compressed to a size cap, saved back and sent to a chat. | File Upload, Job Create (`compress.target`), Job Get |
 | [Auto-caption Google Drive videos and post the link to Slack](./auto-caption-drive-videos-slack.json) | New file in a Drive folder, subtitles transcribed and burned in, link posted. | File Upload, Job Create (`caption.burn`), Job Get |
-| [Run any FFmpeg command on n8n Cloud and save the output to Google Drive](./run-ffmpeg-on-n8n-cloud.json) | A form takes a URL and a command. Failed jobs post their FFmpeg log to Slack. | Job Create (`ffmpeg`), Job Get, Job Get Logs, Trigger on `job.failed` |
-| [Turn a sheet of quotes into vertical quote videos in any language](./quote-videos-from-google-sheets.json) | A new sheet row becomes a 9:16 quote video with music in any script, uploaded to YouTube. | Job Create (`ffmpeg`), Job Get |
+| [Run FFmpeg commands on n8n Cloud with Google Drive and Slack](./run-ffmpeg-on-n8n-cloud.json) | A form takes a URL and a command. Failed jobs post their FFmpeg log to Slack. | Job Create (`ffmpeg`), Job Get, Job Get Logs, Trigger on `job.failed` |
+| [Create YouTube quote videos in any language from Google Sheets](./quote-videos-from-google-sheets.json) | A new sheet row becomes a 9:16 quote video with music in any script, uploaded to YouTube. | Job Create (`ffmpeg`), Job Get |
 | [Cut long videos into captioned vertical shorts with OpenAI](./captioned-shorts-from-long-videos.json) | A new recording in Drive is transcribed, and its best moments become captioned 9:16 Shorts. | File Upload, Job Create (`ffmpeg`), Job Get |
 | [Turn listing photos into a vertical video tour for real estate](./listing-photos-to-video-tour.json) | A form with photo links and listing details becomes a tour with an agent end card, emailed to the agent. | Job Create (`ffmpeg`), Job Get |
 | [Check Drive video uploads and post thumbnail and GIF previews](./video-upload-qc-with-previews.json) | A new file in Drive is checked against your rules, and its poster frame and GIF go to Slack. | File Upload, Job Create (`ffprobe`, `ffmpeg`), Job Get |
@@ -68,55 +68,68 @@ Slack credentials, the folder to watch, the folder to save into, and the Slack
 channel. Font, size, colours, box and position are fields on the Create node.
 Pass an SRT or VTT as the `subtitles` input to burn your own file instead.
 
-### Run any FFmpeg command on n8n Cloud with Rendobar and save the output to Google Drive
+### Run FFmpeg commands on n8n Cloud with Rendobar, Google Drive and Slack
 
-Who it is for: anyone on n8n Cloud, or on a self-hosted n8n 2.x where Execute
-Command is off, who needs to run an FFmpeg command.
+Ready to submit. Categories: Marketing > Content Creation. Paste this description:
 
-How it works: an n8n Form takes a video URL and an FFmpeg command. The command
-names its input `source` and its output `output.mp4`, and Create Job runs it as
-an `ffmpeg` job on Rendobar's workers with the Wait node's resume URL as the
-callback. The execution parks, Get Job downloads the output when Rendobar calls
-back, and the file goes to Drive with the link posted to Slack. A second branch
-starts on any failed job, reads the runner log with Get Logs, and posts the
-FFmpeg error text to Slack.
+```markdown
+## Who is this for
+Anyone on n8n Cloud who needs FFmpeg, and anyone on self-hosted n8n 2.x, where the Execute Command node is off by default.
 
-Setup: a Rendobar API key (free account at rendobar.com), Google Drive and
-Slack credentials, the folder to save into, and the Slack channel. Open the
-form URL from the trigger to submit a job.
+## How it works
+1. An n8n Form takes a video URL and an FFmpeg command.
+2. The Rendobar node runs the command on Rendobar's workers with the full FFmpeg build. The command names its input `source` and its output `output.mp4`, the same way you would type it on your own machine.
+3. A Wait node parks the execution until Rendobar calls back, so nothing polls.
+4. The output is saved to Google Drive and the link is posted to Slack.
+5. A second branch starts whenever a job fails, reads the FFmpeg log and posts the error to Slack.
 
-### Turn a sheet of quotes into vertical quote videos in any language with Rendobar
+## Setup
+1. Create a free account at rendobar.com, make an API key, and add it as a Rendobar credential on every Rendobar node.
+2. Connect Google Drive and pick the folder in the Save node.
+3. Connect Slack and pick the channel in both Slack nodes.
+4. Open the form URL and try `-i source -vf scale=-2:720 -c:v libx264 -crf 28 output.mp4`.
 
-Who it is for: faceless channels and brands posting daily quote Shorts,
-including in languages that self-hosted quote workflows struggle with, such as
-Thai or Arabic.
+## Requirements
+- A Rendobar account
+- Google Drive and Slack accounts
+- A public video URL
 
-How it works: a Google Sheets trigger fires on each new row and a loop takes the
-rows one at a time. A Code node wraps the quote into balanced lines with
-`Intl.Segmenter`, picks the font for the row's language and builds one FFmpeg
-command. Each of the 28 language defaults (Montserrat for English, Cairo for
-Arabic, Kanit for Thai, Noto Sans JP for Japanese and so on) was rendered and
-checked for missing letters, and text is sized to how wide that font really is.
-An HTTP Request node fetches the font file from Google Fonts, bold if the family
-has one. The lines travel as a subtitle file drawn with full text shaping, so
-Arabic letters join and punctuation stays on the correct side. Create Job renders
-a 10 second 1080x1920 video with a slow push-in, lines that fade in one after
-another and a music bed, carrying the Wait node's resume URL as its callback.
-Get Job downloads the video, YouTube receives it as private, and the row is
-marked done.
+## How to customize
+- Change the command for trims, GIFs, audio extraction or any other FFmpeg task.
+- Swap the Drive node for S3, Dropbox or email, or remove Slack if you only need the file.
+```
 
-Setup: a Rendobar API key (free account at rendobar.com), Google Sheets and
-YouTube credentials, and a sheet with the columns quote, author, language,
-background_url, music_url, font, font_url, font_family, status and video_id.
-Only quote, background_url and music_url need a value. Use a background clip of
-at least 10 seconds.
+### Create YouTube quote videos in any language from Google Sheets with Rendobar
 
-Fonts: leave font empty for the language default, or type any Google Fonts
-family in it, such as Tajawal or Playfair Display. To use a font that is not on
-Google Fonts, put a link to its .ttf file in font_url and the font's family name
-in font_family. The family name is also the fix if a Google font does not show:
-a few files name themselves differently, for example Nanum Gothic's file says
-NanumGothic.
+Ready to submit. Categories: Marketing > Content Creation, Marketing > Social Media. Paste this description:
+
+```markdown
+## Who is this for
+Faceless channels, creators and brands that post daily quote Shorts. It runs on n8n Cloud, with no FFmpeg install and no Execute Command node, and handles languages most quote workflows break on, like Arabic, Thai, Hindi or Japanese.
+
+## How it works
+1. A Google Sheets trigger fires on each new row, and a loop renders rows one at a time.
+2. A Code node wraps the quote into balanced lines and picks a font made for the row's language: 28 languages, from Montserrat for English to Cairo for Arabic, Kanit for Thai and Noto Sans JP for Japanese.
+3. An HTTP Request node fetches that font from Google Fonts.
+4. Rendobar renders a 10 second 1080x1920 video: a slow push-in on your background clip, lines that fade in one after another, full text shaping so Arabic letters join, and a music bed.
+5. A Wait node parks the execution until Rendobar calls back. The video then uploads to YouTube as private and the row is marked done.
+
+## Setup
+1. Create a free account at rendobar.com, make an API key, and add it as a Rendobar credential.
+2. Make a sheet with the columns quote, author, language, background_url, music_url, font, font_url, font_family, status and video_id.
+3. Connect Google Sheets in both Sheets nodes and YouTube in the upload node.
+
+## Requirements
+- A Rendobar account
+- Google Sheets and YouTube accounts
+- A background clip of at least 10 seconds and a music track, as public https links
+
+## How to customize
+- Leave font empty for the language default, type any Google Fonts family, or link your own .ttf in font_url with its family name in font_family.
+- Change the duration, zoom or text colors in the Build the quote render node.
+```
+
+If a Google font does not show, set font_family to the name inside the font file. A few files differ from their Google Fonts name, for example Nanum Gothic's file says NanumGothic.
 
 ### Cut long videos into captioned vertical shorts with OpenAI and Rendobar
 
