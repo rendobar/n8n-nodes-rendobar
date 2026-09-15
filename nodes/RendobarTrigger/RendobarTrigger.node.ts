@@ -97,6 +97,31 @@ export class RendobarTrigger implements INodeType {
 		description:
 			'Starts the workflow when a Rendobar media job completes, stops or is cancelled, when a storage delivery succeeds, fails or settles, or when the account balance runs low',
 		defaults: { name: 'Rendobar Trigger' },
+		// Inline for the same reason as the Rendobar node: the registry reads the
+		// codex from the description, so aliases in the JSON file alone never
+		// reached the search n8n runs before install.
+		codex: {
+			categories: ['Marketing & Content', 'Development', 'Utility'],
+			alias: [
+				'FFmpeg',
+				'video',
+				'media',
+				'render',
+				'transcode',
+				'job',
+				'webhook',
+				'complete',
+				'callback',
+				'balance',
+				'credits',
+				'failed',
+				'cancelled',
+			],
+			resources: {
+				primaryDocumentation: [{ url: 'https://rendobar.com/docs' }],
+				credentialDocumentation: [{ url: 'https://rendobar.com/docs' }],
+			},
+		},
 		inputs: [],
 		outputs: [NodeConnectionTypes.Main],
 		credentials: [{ name: 'rendobarApi', required: true }],

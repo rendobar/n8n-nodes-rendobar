@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.6.1 - 2026-09-15
+
+### Fixed
+
+- **Rendobar showed no icon in n8n's light theme until it was installed.**
+  Before install, the nodes panel and Node details draw the icon from n8n's
+  registry, which keeps one file per node and had stored the dark-theme
+  variant: a white mark that disappears on a white panel. Both variants are
+  now tiles, a black mark on white for the light theme and a white mark on
+  black for the dark one, so the icon shows on either theme whichever file
+  the registry keeps.
+- **A nodes panel search for FFmpeg, or any other alias, did not find
+  Rendobar before install.** n8n's search matches a node's name and its codex
+  aliases, and the registry reads the codex from the node description rather
+  than from the `.node.json` file the aliases lived in, so both nodes reached
+  it with an empty codex. The codex is now declared inline as well, and a test
+  keeps it identical to the file.
+- A Destinations row path, or a Storage File key or folder, containing `%`, `?`
+  or `#` is percent-encoded in its `storage://` URI, so the job reads or writes
+  the object that was named instead of reading those characters as URI syntax.
+  The raw `path` and `key` fields are unchanged.
+
 ## 0.6.0 - 2026-09-13
 
 ### Added
