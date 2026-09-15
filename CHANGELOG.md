@@ -150,7 +150,7 @@
 
 ### Fixed
 
-- **A copy assertion in the node-description tests could never fail.** The word-boundary escapes in `/Url/` and `/Id/` had been written as literal backspace characters, so the pattern matched nothing and the check that the asset field list spells `URL` and `ID` in capitals was inert. This is the same defect 0.3.0 fixed in the callback tests, in a second file that was missed. The assertion passes now that it runs.
+- **A copy assertion in the node-description tests could never fail.** The word-boundary escapes in `/\bUrl\b/` and `/\bId\b/` had been written as literal backspace characters, so the pattern matched nothing and the check that the asset field list spells `URL` and `ID` in capitals was inert. This is the same defect 0.3.0 fixed in the callback tests, in a second file that was missed. The assertion passes now that it runs.
 
 ## 0.3.2 - 2026-08-20
 
