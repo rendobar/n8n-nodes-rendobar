@@ -251,6 +251,14 @@ test("each node carries its codex inline, identical to its codex file", () => {
 		const { categories, alias, resources } = JSON.parse(readFileSync(join(root, ...file.split('/')), 'utf8'));
 		assert.deepEqual(description.codex, { categories, alias, resources }, `${file} and the inline codex differ`);
 		assert.ok(description.codex.alias.includes('FFmpeg'), `${description.name} is not found by an FFmpeg search`);
+		// n8n matches a query only when its letters appear in order inside one alias,
+		// so a long phrase fuzzy-matches unrelated searches. Keep terms short and unique.
+		const seen = new Set();
+		for (const term of alias) {
+			assert.ok(term.split(' ').length <= 3 && term.length <= 20, `"${term}" is too long for a search term`);
+			assert.ok(!seen.has(term.toLowerCase()), `"${term}" is listed twice`);
+			seen.add(term.toLowerCase());
+		}
 	}
 });
 

@@ -16,7 +16,10 @@
   aliases, and the registry reads the codex from the node description rather
   than from the `.node.json` file the aliases lived in, so both nodes reached
   it with an empty codex. The codex is now declared inline as well, and a test
-  keeps it identical to the file.
+  keeps it identical to the file. The aliases now name the tasks people search
+  for, such as compress video, subtitles, speech to text, watermark and vertical
+  video, and drop generic words like account, download and storage that matched
+  searches for other nodes.
 - A Destinations row path, or a Storage File key or folder, containing `%`, `?`
   or `#` is percent-encoded in its `storage://` URI, so the job reads or writes
   the object that was named instead of reading those characters as URI syntax.
