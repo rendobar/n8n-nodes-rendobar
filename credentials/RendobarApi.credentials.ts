@@ -26,7 +26,7 @@ export class RendobarApi implements ICredentialType {
 
 	icon: Icon = { light: 'file:../icons/rendobar.svg', dark: 'file:../icons/rendobar.dark.svg' };
 
-	documentationUrl = 'https://rendobar.com/docs';
+	documentationUrl = 'https://rendobar.com/docs/automation/n8n';
 
 	properties: INodeProperties[] = [
 		{

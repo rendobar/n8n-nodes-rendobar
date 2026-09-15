@@ -91,7 +91,7 @@ const youtubeUpload = (name, position, title, description) => ({
   parameters: { resource: "video", operation: "upload", title, regionCode: "US", categoryId: "22", binaryProperty: "data", options: { privacyStatus: "private", description } },
 });
 const withModule = (file, lines) => `${moduleSource(file)}\n\n${lines.join("\n")}`;
-const SETUP_KEY = "1. Create a Rendobar account at rendobar.com, make an API key under Settings, and add it as a Rendobar API credential on every Rendobar node.";
+const SETUP_KEY = "1. Create a Rendobar account at rendobar.com, make an API key on the API Keys page, and add it as a Rendobar API credential on every Rendobar node.";
 
 // ---------------------------------------------------------------------------
 // 1. Sheet of quotes to quote videos
@@ -131,7 +131,7 @@ const SETUP_KEY = "1. Create a Rendobar account at rendobar.com, make an API key
   ].join("\n");
   const wf = build("quotes", "Create YouTube quote videos in any language from Google Sheets with Rendobar", [
     sticky("How it works", main, [-80, -900], 700, 820),
-    sticky("Section: render", "### Wrap, pick a font and render\nThe Code node splits the quote into lines and picks the font for its language. Google Fonts returns the font file, and Rendobar renders while the Wait node parks the execution.", [400, -60], 1100, 260, 7),
+    sticky("Section: render", "### Wrap, pick a font and render\nThe Code node splits the quote into lines and picks the font for its language. Google Fonts gives the link to its font file, and Rendobar renders while the Wait node parks the execution.", [400, -60], 1100, 260, 7),
     sticky("Section: publish", "### Publish\nGet downloads the video, YouTube receives it as private, and the row is marked done so it never renders twice.", [1520, -60], 660, 260, 7),
     {
       name: "Watch for new quotes", type: "n8n-nodes-base.googleSheetsTrigger", typeVersion: 1, position: row(0),

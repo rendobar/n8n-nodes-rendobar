@@ -45,5 +45,6 @@ they match.
 
 ## Templates
 
-`templates/*.json` are generated. Edit `templates/src/render/*.js` and run `node templates/src/build.mjs`. Never edit the
-JSON.
+`templates/src/build.mjs` generates the quote, shorts, listing and upload QC templates. For those, edit `build.mjs` or
+`templates/src/render/*.js`, run `node templates/src/build.mjs`, and never edit their JSON. The FFmpeg, auto-caption and
+compress templates are written by hand, so edit their JSON directly.

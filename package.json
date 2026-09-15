@@ -1,7 +1,7 @@
 {
 	"name": "@rendobar/n8n-nodes-rendobar",
 	"version": "0.6.1",
-	"description": "Rendobar media processing for n8n: submit, track, download and cancel media jobs, read job logs and account credits, and trigger on job events.",
+	"description": "Run FFmpeg commands, compose, compress and caption videos, and generate, edit or upscale images in n8n workflows",
 	"license": "MIT",
 	"homepage": "https://rendobar.com",
 	"publishConfig": {
