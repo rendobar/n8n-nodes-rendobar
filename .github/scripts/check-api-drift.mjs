@@ -379,7 +379,47 @@ async function main() {
 		}
 	}
 
-	// 6. A tag the scoping above has never heard of: a whole new API area.
+	// 6. Search terms per live job type. The Job Type dropdown and the form follow
+	//    the API on their own, but n8n's nodes panel search matches only a node's
+	//    name and `codex.alias`, which are compiled into the package. A job type
+	//    with no words in the aliases works, yet nobody finds the node by searching
+	//    for that task. Every term listed here must also be in Rendobar.node.json.
+	const JOB_TYPE_SEARCH_TERMS = {
+		'caption.burn': ['burn subtitles', 'subtitles', 'SRT'],
+		'captions.animate': ['animated captions', 'captions', 'speech to text'],
+		compose: ['compose video', 'video timeline', 'merge videos', 'slideshow'],
+		'compress.target': ['compress video', 'reduce file size'],
+		ffmpeg: ['FFmpeg', 'transcode', 'convert video', 'trim video'],
+		ffprobe: ['ffprobe', 'video metadata'],
+		'image.edit': ['edit image'],
+		'image.generate': ['image generation', 'text to image'],
+		'image.upscale': ['upscale', 'image upscaler'],
+	};
+	const aliasSource = readSource('nodes/Rendobar/Rendobar.node.json');
+	if (aliasSource) {
+		const aliases = new Set(JSON.parse(aliasSource).alias ?? []);
+		for (const type of liveTypes) {
+			const terms = JOB_TYPE_SEARCH_TERMS[type];
+			if (!terms) {
+				contract.push(
+					`- Job type \`${type}\` has no search terms — add the tasks people would search for to \`codex.alias\` in \`Rendobar.node.json\` and the inline codex, then map them in \`JOB_TYPE_SEARCH_TERMS\` (see CLAUDE.md)`,
+				);
+				continue;
+			}
+			for (const term of terms.filter((t) => !aliases.has(t))) {
+				contract.push(`- Search term "${term}" for \`${type}\` is not in the Rendobar node's \`codex.alias\``);
+			}
+		}
+		for (const type of Object.keys(JOB_TYPE_SEARCH_TERMS).sort()) {
+			if (!liveTypes.includes(type)) {
+				contract.push(
+					`- \`JOB_TYPE_SEARCH_TERMS\` maps \`${type}\`, which is no longer a live job type — drop the entry, and its aliases if nothing else needs them`,
+				);
+			}
+		}
+	}
+
+	// 7. A tag the scoping above has never heard of: a whole new API area.
 	const unknownTags = new Set();
 	for (const op of live) {
 		for (const tag of op.tags) {
