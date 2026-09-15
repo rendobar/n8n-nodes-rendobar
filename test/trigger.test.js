@@ -144,7 +144,7 @@ test('the trigger description says what it fires on', () => {
 
 	// n8n shows this line under "Rendobar" in node search for the whole package, so
 	// it has to say what Rendobar handles, not only when it fires.
-	assert.match(description, /(video|image)/, 'the search result does not say what Rendobar handles');
+	assert.match(description, /(video|image)/, 'the search result does not say what Rendobar handles');
 
 	// A headline, not an event list. Past about two lines it crowds the next result.
 	assert.ok(description.length <= 90, `"${description}" is ${description.length} characters`);
