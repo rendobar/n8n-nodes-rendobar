@@ -694,8 +694,10 @@ export class Rendobar implements INodeType {
 		group: ['transform'],
 		version: 1,
 		subtitle: '={{$parameter["operation"] + ": " + $parameter["resource"]}}',
+		// The line under the node name in the nodes panel. It names what people come to
+		// do, the way n8n's own nodes read, not the API verbs behind it.
 		description:
-			'Submit, track and cancel Rendobar media processing jobs, fetch their output and logs, and read the account balance',
+			'Run FFmpeg commands, compress and caption videos, and generate, edit or upscale images',
 		defaults: { name: 'Rendobar' },
 		// n8n's registry builds the listing shown before install from this
 		// description, not from Rendobar.node.json, and the nodes panel search

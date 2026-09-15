@@ -142,6 +142,9 @@ test('the trigger description says what it fires on', () => {
 	assert.match(description, /\bjob\b/i, 'the job events are not named');
 	assert.match(description, /\bbalance\b/i, 'the balance events are not named');
 
+	// A headline, not an event list. Past about two lines it crowds the next result.
+	assert.ok(description.length <= 90, `"${description}" is ${description.length} characters`);
+
 	// The writing rules this repo follows: no em-dash, no semicolons in prose.
 	assert.equal(/[—;]/.test(description), false, `"${description}" uses banned punctuation`);
 });
