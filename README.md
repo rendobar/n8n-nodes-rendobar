@@ -1,6 +1,6 @@
 # @rendobar/n8n-nodes-rendobar
 
-n8n community node for [Rendobar](https://rendobar.com), a media processing API. Submit, track, download and cancel video jobs from your workflows, read the account balance, and start workflows when jobs finish.
+n8n community node for [Rendobar](https://rendobar.com). Run FFmpeg commands, compose, compress and caption videos, and generate, edit or upscale images from your workflows, and start a workflow when a job finishes.
 
 Verified by n8n and listed at [n8n.io/integrations/rendobar](https://n8n.io/integrations/rendobar/), so it installs from the nodes panel on n8n Cloud.
 
@@ -30,7 +30,7 @@ Ready-made workflows are in [`templates/`](./templates/), including one that run
 
 ## Credentials
 
-You need a Rendobar API key (starts with `rb_`). Create one in the [dashboard](https://app.rendobar.com). The connection is validated against your account when you save it.
+You need a Rendobar API key (starts with `rb_`). Create one on the [API Keys](https://app.rendobar.com/api-keys) page of the dashboard. The connection is validated against your account when you save it.
 
 - **API Key**: your `rb_` key. Stored as a password field and never written to the workflow.
 - **Base URL**: defaults to `https://api.rendobar.com`. Change it only to reach a non-production Rendobar environment.
@@ -568,7 +568,7 @@ Tested against n8n's current community-node API (`n8nNodesApiVersion: 1`).
 
 ## Resources
 
-- [Rendobar docs](https://rendobar.com/docs)
+- [Rendobar n8n docs](https://rendobar.com/docs/automation/n8n)
 - [n8n community nodes](https://docs.n8n.io/integrations/community-nodes/)
 - [Changelog](https://github.com/rendobar/n8n-nodes-rendobar/blob/main/CHANGELOG.md)
 

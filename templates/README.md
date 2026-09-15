@@ -110,7 +110,7 @@ Faceless channels, creators and brands that post daily quote Shorts. It runs on 
 ## How it works
 1. A Google Sheets trigger fires on each new row, and a loop renders rows one at a time.
 2. A Code node wraps the quote into balanced lines and picks a font made for the row's language: 28 languages, from Montserrat for English to Cairo for Arabic, Kanit for Thai and Noto Sans JP for Japanese.
-3. An HTTP Request node fetches that font from Google Fonts.
+3. An HTTP Request node looks up that font's file on Google Fonts.
 4. Rendobar renders a 10 second 1080x1920 video: a slow push-in on your background clip, lines that fade in one after another, full text shaping so Arabic letters join, and a music bed.
 5. A Wait node parks the execution until Rendobar calls back. The video then uploads to YouTube as private and the row is marked done.
 

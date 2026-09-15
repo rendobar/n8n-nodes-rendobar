@@ -27,12 +27,12 @@
 	"resources": {
 		"credentialDocumentation": [
 			{
-				"url": "https://rendobar.com/docs"
+				"url": "https://rendobar.com/docs/automation/n8n"
 			}
 		],
 		"primaryDocumentation": [
 			{
-				"url": "https://rendobar.com/docs"
+				"url": "https://rendobar.com/docs/automation/n8n"
 			}
 		]
 	}

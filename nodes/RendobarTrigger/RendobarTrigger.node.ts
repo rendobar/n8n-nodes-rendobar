@@ -122,8 +122,8 @@ export class RendobarTrigger implements INodeType {
 				'processing complete',
 			],
 			resources: {
-				primaryDocumentation: [{ url: 'https://rendobar.com/docs' }],
-				credentialDocumentation: [{ url: 'https://rendobar.com/docs' }],
+				primaryDocumentation: [{ url: 'https://rendobar.com/docs/automation/n8n' }],
+				credentialDocumentation: [{ url: 'https://rendobar.com/docs/automation/n8n' }],
 			},
 		},
 		inputs: [],
