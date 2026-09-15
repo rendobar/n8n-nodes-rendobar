@@ -118,7 +118,6 @@ export class RendobarTrigger implements INodeType {
 				'render finished',
 				'video ready',
 				'processing complete',
-				'storage delivery',
 			],
 			resources: {
 				primaryDocumentation: [{ url: 'https://rendobar.com/docs' }],

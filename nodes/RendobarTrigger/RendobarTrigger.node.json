@@ -22,8 +22,7 @@
 		"job failed",
 		"render finished",
 		"video ready",
-		"processing complete",
-		"storage delivery"
+		"processing complete"
 	],
 	"resources": {
 		"credentialDocumentation": [
