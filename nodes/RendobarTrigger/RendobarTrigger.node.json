@@ -11,16 +11,18 @@
 		"FFmpeg",
 		"video",
 		"media",
-		"render",
+		"video processing",
+		"render video",
 		"transcode",
-		"job",
-		"webhook",
-		"complete",
-		"callback",
-		"balance",
-		"credits",
-		"failed",
-		"cancelled"
+		"compress video",
+		"captions",
+		"subtitles",
+		"job finished",
+		"job completed",
+		"job failed",
+		"render finished",
+		"video ready",
+		"processing complete"
 	],
 	"resources": {
 		"credentialDocumentation": [
