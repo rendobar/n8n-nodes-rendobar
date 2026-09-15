@@ -121,7 +121,7 @@ Set **Output** to **Raw** when you also need `output`, `steps`, `region`, timing
 
 ### Rendobar Trigger
 
-Starts a workflow when a Rendobar job finishes or the balance runs low. Select the events to listen for: **Job Created**, **Job Started**, **Job Completed**, **Job Failed**, **Job Cancelled**, **Job Delivery Succeeded**, **Job Delivery Failed**, **Job Deliveries Settled**, **Balance Low** and **Balance Depleted**. On activation the node registers its webhook URL with Rendobar and removes it on deactivation.
+Starts a workflow when a Rendobar video or image job finishes, or when the balance runs low. Select the events to listen for: **Job Created**, **Job Started**, **Job Completed**, **Job Failed**, **Job Cancelled**, **Job Delivery Succeeded**, **Job Delivery Failed**, **Job Deliveries Settled**, **Balance Low** and **Balance Depleted**. On activation the node registers its webhook URL with Rendobar and removes it on deactivation.
 
 Pair **Job Failed** with **Job > Get Logs** to see what the runner reported, and **Balance Low** with **Account > Get** to find out how low.
 

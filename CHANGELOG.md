@@ -29,9 +29,10 @@
 
 - The line under each node in the nodes panel now says what it does in a few
   words. Rendobar reads "Run FFmpeg commands, compose, compress and caption
-  videos, and generate, edit or upscale images", and Rendobar Trigger reads "Starts the
-  workflow when a Rendobar job finishes or the balance runs low". The old lines
-  listed API verbs and every trigger event.
+  videos, and generate, edit or upscale images". Rendobar Trigger reads "Starts
+  the workflow when a Rendobar video or image job finishes, or the balance runs
+  low", which matters most: n8n's node search shows the trigger's line for the
+  whole package. The old lines listed API verbs and every trigger event.
 
 ## 0.6.0 - 2026-09-13
 

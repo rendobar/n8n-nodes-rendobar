@@ -92,10 +92,12 @@ export class RendobarTrigger implements INodeType {
 		group: ['trigger'],
 		version: 1,
 		subtitle: '={{$parameter["events"].join(", ")}}',
-		// n8n's trigger picker and node details panel show this line as the headline for
-		// the whole package. It names what the trigger fires on in one glance. The Events
-		// dropdown lists every event.
-		description: 'Starts the workflow when a Rendobar job finishes or the balance runs low',
+		// This is the line people read under "Rendobar" in n8n's node search, for the
+		// whole package: the node creator merges a node with its trigger and keeps the
+		// trigger's description (useActionsGeneration.ts, `app.description =
+		// trigger.description`). So it says what Rendobar handles as well as when it
+		// fires. The Events dropdown lists every event.
+		description: 'Starts the workflow when a Rendobar video or image job finishes, or the balance runs low',
 		defaults: { name: 'Rendobar Trigger' },
 		// Inline for the same reason as the Rendobar node: the registry reads the
 		// codex from the description, so aliases in the JSON file alone never
