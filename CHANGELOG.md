@@ -25,6 +25,15 @@
   the object that was named instead of reading those characters as URI syntax.
   The raw `path` and `key` fields are unchanged.
 
+### Changed
+
+- The line under each node in the nodes panel now says what it does in a few
+  words. Rendobar reads "Run FFmpeg commands, compose, compress and caption
+  videos, and generate, edit or upscale images". Rendobar Trigger reads "Starts
+  the workflow when a Rendobar video or image job finishes, or the balance runs
+  low", which matters most: n8n's node search shows the trigger's line for the
+  whole package. The old lines listed API verbs and every trigger event.
+
 ## 0.6.0 - 2026-09-13
 
 ### Added
@@ -141,7 +150,7 @@
 
 ### Fixed
 
-- **A copy assertion in the node-description tests could never fail.** The word-boundary escapes in `/Url/` and `/Id/` had been written as literal backspace characters, so the pattern matched nothing and the check that the asset field list spells `URL` and `ID` in capitals was inert. This is the same defect 0.3.0 fixed in the callback tests, in a second file that was missed. The assertion passes now that it runs.
+- **A copy assertion in the node-description tests could never fail.** The word-boundary escapes in `/\bUrl\b/` and `/\bId\b/` had been written as literal backspace characters, so the pattern matched nothing and the check that the asset field list spells `URL` and `ID` in capitals was inert. This is the same defect 0.3.0 fixed in the callback tests, in a second file that was missed. The assertion passes now that it runs.
 
 ## 0.3.2 - 2026-08-20
 

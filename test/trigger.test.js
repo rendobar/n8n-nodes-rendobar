@@ -142,6 +142,13 @@ test('the trigger description says what it fires on', () => {
 	assert.match(description, /\bjob\b/i, 'the job events are not named');
 	assert.match(description, /\bbalance\b/i, 'the balance events are not named');
 
+	// n8n shows this line under "Rendobar" in node search for the whole package, so
+	// it has to say what Rendobar handles, not only when it fires.
+	assert.match(description, /(video|image)/, 'the search result does not say what Rendobar handles');
+
+	// A headline, not an event list. Past about two lines it crowds the next result.
+	assert.ok(description.length <= 90, `"${description}" is ${description.length} characters`);
+
 	// The writing rules this repo follows: no em-dash, no semicolons in prose.
 	assert.equal(/[—;]/.test(description), false, `"${description}" uses banned punctuation`);
 });
