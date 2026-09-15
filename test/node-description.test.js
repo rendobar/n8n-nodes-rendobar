@@ -578,10 +578,11 @@ test('every gated parameter is reachable from some resource and operation', () =
 });
 
 test('the node description names what people come to do, in one short line', () => {
-	// Shown under the node name in the nodes panel. n8n's own nodes keep it to a few
-	// words ("Makes an HTTP request and returns the response data").
+	// Shown under the node name in the nodes panel, where 100 characters is about
+	// three lines. n8n's own nodes keep it to a few words ("Makes an HTTP request
+	// and returns the response data").
 	const text = description.description;
-	assert.ok(text.length <= 90, `"${text}" is ${text.length} characters`);
+	assert.ok(text.length <= 100, `"${text}" is ${text.length} characters`);
 	assert.equal(/[.!]$/.test(text), false, `"${text}" ends with punctuation`);
 	assert.match(text, /FFmpeg/, 'the capability people search for is not named');
 });

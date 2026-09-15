@@ -28,8 +28,8 @@
 ### Changed
 
 - The line under each node in the nodes panel now says what it does in a few
-  words. Rendobar reads "Run FFmpeg commands, compress and caption videos, and
-  generate, edit or upscale images", and Rendobar Trigger reads "Starts the
+  words. Rendobar reads "Run FFmpeg commands, compose, compress and caption
+  videos, and generate, edit or upscale images", and Rendobar Trigger reads "Starts the
   workflow when a Rendobar job finishes or the balance runs low". The old lines
   listed API verbs and every trigger event.
 
