@@ -49,7 +49,7 @@
 	},
 	"devDependencies": {
 		"@n8n/node-cli": "^0.49.0",
-		"eslint": "9.39.5",
+		"eslint": "10.11.0",
 		"prettier": "3.9.8",
 		"release-it": "20.2.1",
 		"typescript": "5.9.3"
