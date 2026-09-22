@@ -44,13 +44,36 @@ const OUT_OF_SCOPE_TAGS = new Set([
 	'Organizations',
 	'API Keys',
 	'Upload Sessions', // share-link browser flow
+	'Account', // capabilities is a dashboard read; the node's account surface is the balance below
+	'Storage', // connecting, testing and rotating a bucket are dashboard actions; the node only reads what is already connected
+	'Team', // inviting and removing members is not workflow automation
 ]);
 
-// Endpoints inside an out-of-scope tag that the node deliberately DOES expose.
-// Without this, the report keeps listing them as unimplemented and the drift
-// signal degrades into noise the reader learns to skip.
-const OUT_OF_SCOPE_EXCEPTIONS = new Set([
-	'GET /billing/state', // Account -> Get. The balance the balance.* triggers fire on.
+// Endpoints inside an IN-scope tag that the node deliberately does NOT expose, and why.
+// Without this, a dashboard-shaped endpoint under Jobs or Webhooks sits in the gap list
+// every week forever, and a list that never shrinks stops being read. Deleting a line here
+// puts the endpoint back in front of the reader as a candidate.
+const DECLINED = new Map([
+	['GET /jobs/{param}/download', 'Job -> Download reads the output URL the job already returns.'],
+	['GET /jobs/{param}/metrics', 'Deprecated alias for /resources.'],
+	['GET /jobs/{param}/resources', 'Run observability, read in the dashboard, not acted on in a workflow.'],
+	['GET /jobs/{param}/throughput', 'Run observability, as above.'],
+	['GET /jobs/{param}/timings', 'Run observability, as above.'],
+	['GET /jobs/stats', 'A dashboard summary, not a per-run workflow step.'],
+	['POST /jobs/{param}/dispute', 'A billing conversation, handled by a person.'],
+	['POST /jobs/{param}/deliveries/retry', 'Retrying a storage delivery is a dashboard repair.'],
+	['DELETE /assets/{param}', 'Assets expire on their own; a workflow that uploads does not clean up.'],
+	['GET /assets', 'Asset management, done in the dashboard.'],
+	['GET /assets/{param}', 'As above.'],
+	['GET /assets/{param}/content', 'As above.'],
+	['GET /assets/{param}/download', 'As above.'],
+	['GET /assets/{param}/preview', 'As above.'],
+	['GET /assets/templates', 'PSD templates belong to the image tools, not this node.'],
+	['GET /webhooks/deliveries', 'The Trigger node owns one endpoint; delivery history is a dashboard read.'],
+	['GET /webhooks/endpoints', 'As above.'],
+	['POST /webhooks/deliveries/{param}/retry', 'As above.'],
+	['POST /webhooks/endpoints/{param}/secret', 'As above.'],
+	['POST /webhooks/endpoints/{param}/test', 'n8n tests a trigger by listening, not by asking the API to fire.'],
 ]);
 
 // ─── live platform ────────────────────────────────────────────────────────────
@@ -194,16 +217,22 @@ function nodeCalls(files) {
 		const rel = file.slice(REPO_ROOT.length + 1).replace(/\\/g, '/');
 		const bindings = templateBindings(source);
 
-		const callRe = /rendobarApiRequest\.call\(\s*this\s*,\s*'([A-Z]+)'\s*,\s*(`[^`]*`|'[^']*')/g;
-		for (const m of source.matchAll(callRe)) {
-			const key = `${m[1]} ${resolveLiteral(m[2], bindings)}`;
-			// A body argument, when present, is the next thing after the path.
-			const after = source.slice(m.index + m[0].length);
-			const bodyStart = after.match(/^\s*,\s*(?=\{)/);
-			const bodyKeys = bodyStart
-				? objectKeys(balanced(after, bodyStart[0].length, '{', '}'))
-				: [];
-			calls.set(key, { where: rel, bodyKeys });
+		// Every transport call passes ONE request spec: { method, path, body?, ... }.
+		// All three helpers count: rendobarApiRequest (most calls), rendobarRequest (calls
+		// that read the status themselves, such as job logs) and rendobarUpload.
+		// The spec is read out of the call's arguments rather than off fixed positions,
+		// because a call can choose between two specs with a ternary, and because a
+		// `path` written as a shorthand resolves through the file's own bindings.
+		for (const m of source.matchAll(/rendobar(?:ApiRequest|Request|Upload)\.call\(/g)) {
+			const args = balanced(source, source.indexOf('(', m.index), '(', ')');
+			for (const spec of requestSpecs(args)) {
+				const method = spec.match(/\bmethod:\s*'([A-Z]+)'/)?.[1];
+				const path = specPath(spec, bindings);
+				if (!method || path === undefined) continue;
+				const bodyAt = spec.search(/\bbody:\s*\{/);
+				const bodyKeys = bodyAt === -1 ? [] : objectKeys(balanced(spec, spec.indexOf('{', bodyAt), '{', '}'));
+				calls.set(`${method} ${path}`, { where: rel, bodyKeys });
+			}
 		}
 
 		// The credential test request is a plain object, not a transport call.
@@ -217,6 +246,35 @@ function nodeCalls(files) {
 	}
 
 	return calls;
+}
+
+/** Every `{ ... method: ... }` object inside a call's arguments, one per branch of a ternary. */
+function requestSpecs(args) {
+	const specs = [];
+	for (const m of args.matchAll(/\bmethod:\s*'[A-Z]+'/g)) {
+		// Walk back to the brace that opens the object this `method` belongs to.
+		let depth = 0;
+		let open = -1;
+		for (let i = m.index; i >= 0; i--) {
+			if (args[i] === '}') depth++;
+			else if (args[i] === '{') {
+				if (depth === 0) { open = i; break; }
+				depth--;
+			}
+		}
+		if (open !== -1) specs.push(balanced(args, open, '{', '}'));
+	}
+	return specs;
+}
+
+/** A spec's path as the API writes it: a literal, or a name the file bound to one. */
+function specPath(spec, bindings) {
+	const literal = spec.match(/\bpath:\s*(`[^`]*`|'[^']*')/);
+	if (literal) return resolveLiteral(literal[1], bindings);
+	// `path` on its own, or `path: someName`: resolve the name through the file's bindings.
+	const name = spec.match(/\bpath:\s*(\w+)/)?.[1] ?? (/\bpath\s*,/.test(spec) ? 'path' : undefined);
+	if (name && bindings.has(name)) return resolveLiteral(`\`${bindings.get(name)}\``, bindings);
+	return undefined;
 }
 
 // The `value:` entries of every `options`/`multiOptions` property with this
@@ -437,9 +495,8 @@ async function main() {
 	const outOfScopeGaps = [];
 	for (const op of live) {
 		if (calls.has(op.key)) continue;
-		// An endpoint the node deliberately exposes from an out-of-scope tag is not
-		// a gap, and listing it as one trains the reader to skip this section.
-		if (OUT_OF_SCOPE_EXCEPTIONS.has(op.key)) continue;
+		// A decision already taken is not a gap. It is listed under its own heading instead.
+		if (DECLINED.has(op.key)) continue;
 		const line = `- \`${op.key}\`${op.summary ? ` — ${op.summary}` : ''}`;
 		const inScope = op.tags.some((t) => IN_SCOPE_TAGS.has(t) || unknownTags.has(t));
 		(inScope ? inScopeGaps : outOfScopeGaps).push(line);
@@ -547,6 +604,19 @@ async function main() {
 		);
 	} else {
 		out.push('Every automation endpoint the API exposes has a node operation.', '');
+	}
+
+	if (DECLINED.size) {
+		out.push(
+			`<details><summary>${DECLINED.size} endpoints looked at and left alone, with the reason</summary>`,
+			'',
+			bullets([...DECLINED].map(([key, why]) => `- \`${key}\` — ${why}`)),
+			'',
+			'Delete its line in `DECLINED` to put one back in the list above.',
+			'',
+			'</details>',
+			'',
+		);
 	}
 
 	if (outOfScopeGaps.length) {
