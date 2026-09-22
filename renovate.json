@@ -8,26 +8,50 @@
   "semanticCommitType": "chore",
   "semanticCommitScope": "deps",
   "commitMessageAction": "bump",
-  "schedule": ["before 6am on Monday"],
+  "schedule": [
+    "before 6am on Monday"
+  ],
   "timezone": "UTC",
   "packageRules": [
     {
-      "matchUpdateTypes": ["patch", "minor"],
+      "matchUpdateTypes": [
+        "patch",
+        "minor"
+      ],
       "matchCurrentVersion": "!/^0/",
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true
     },
     {
-      "matchUpdateTypes": ["major"],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "automerge": false,
-      "addLabels": ["dependencies", "major"]
+      "addLabels": [
+        "dependencies",
+        "major"
+      ]
     },
     {
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "pinDigests": true,
       "groupName": "github-actions",
       "automerge": true
+    },
+    {
+      "description": "eslint, typescript and release-it are driven by @n8n/node-cli: it bundles eslint 9 and typescript-eslint 8 (peer typescript <6.1), and drives publishing through release-it, which its own template pins to ^19. A major in any of the three breaks lint or the release until the CLI moves first, so they wait on the dependency dashboard instead of opening a PR every week. Re-check when @n8n/node-cli ships a major.",
+      "matchPackageNames": [
+        "eslint",
+        "typescript",
+        "release-it"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true
     }
   ],
   "dependencyDashboard": true,
