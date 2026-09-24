@@ -445,7 +445,7 @@ async function main() {
 	const JOB_TYPE_SEARCH_TERMS = {
 		'caption.burn': ['burn subtitles', 'subtitles', 'SRT'],
 		'captions.animate': ['animated captions', 'captions', 'speech to text'],
-		compose: ['compose video', 'video timeline', 'merge videos', 'slideshow'],
+		compose: ['compose video', 'video timeline', 'merge videos', 'slideshow', 'lower third', 'keyframes', 'green screen', 'Lottie'],
 		'compress.target': ['compress video', 'reduce file size'],
 		ffmpeg: ['FFmpeg', 'transcode', 'convert video', 'trim video'],
 		ffprobe: ['ffprobe', 'video metadata'],
