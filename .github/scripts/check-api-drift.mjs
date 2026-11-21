@@ -452,6 +452,8 @@ async function main() {
 		'image.edit': ['edit image'],
 		'image.generate': ['image generation', 'text to image'],
 		'image.upscale': ['upscale', 'image upscaler'],
+		'3d.generate': ['image to 3D', 'text to 3D', '3D printing'],
+		'3d.prepare': ['STL', '3MF', '3D printing'],
 	};
 	const aliasSource = readSource('nodes/Rendobar/Rendobar.node.json');
 	if (aliasSource) {
